@@ -70,8 +70,8 @@ const App: React.FC = () => {
       const h = window.innerHeight;
       const scaleW = w / CANVAS_WIDTH;
       const scaleH = h / CANVAS_HEIGHT;
-      // Precision scaling to ensure no clipping on portrait/landscape
-      setScale(Math.min(scaleW, scaleH) * 0.98);
+      // Fixed scaling logic to ensure the entire field is visible regardless of scale/DPI
+      setScale(Math.min(scaleW, scaleH) * 0.96);
     };
 
     const checkTouch = () => {
@@ -165,13 +165,16 @@ const App: React.FC = () => {
           let nextInvTime = prev.invincibilityTime - deltaTime;
           let nextRecInvTime = prev.recoveryInvincibilityTime - deltaTime;
           
+          // Normalized scoring: Added 100 points per second adjusted by speed
+          const pointsToAdd = Math.floor(config.speed * 20 * deltaTime);
+
           return { 
             ...prev, 
             timeLeft: nextTime, 
             invincibilityTime: Math.max(0, nextInvTime),
             isInvincible: nextInvTime > 0,
             recoveryInvincibilityTime: Math.max(0, nextRecInvTime),
-            score: prev.score + Math.floor(config.speed * 0.5) 
+            score: prev.score + pointsToAdd
           };
         });
 
@@ -254,7 +257,7 @@ const App: React.FC = () => {
         let collisionTriggeredThisFrame = false;
         
         entities.forEach(entity => {
-          if (collisionTriggeredThisFrame) return; // Guard against multiple life losses
+          if (collisionTriggeredThisFrame || !isHarmable) return; 
 
           const dx = Math.abs(playerPosition.x - entity.position.x);
           const dy = Math.abs(playerPosition.y - entity.position.y);
@@ -269,11 +272,12 @@ const App: React.FC = () => {
                 score: prev.score + 1000 
               }));
               setEntities(prev => prev.filter(e => e.id !== entity.id));
-            } else if (isHarmable) {
-              collisionTriggeredThisFrame = true; // Block subsequent collisions in this frame
+            } else {
+              // This is a dangerous obstacle or car
+              collisionTriggeredThisFrame = true; 
               soundManager.playCrash();
-              setShake(20);
-              createParticles(playerPosition.x, playerPosition.y, '#ff4444', 30);
+              setShake(25);
+              createParticles(playerPosition.x, playerPosition.y, '#ff3333', 35);
               setGameState(prev => {
                 const newLives = prev.lives - 1;
                 const isGameOver = newLives <= 0;
@@ -287,7 +291,7 @@ const App: React.FC = () => {
                   lives: Math.max(0, newLives),
                   score: Math.max(0, prev.score - 500),
                   recoveryTime: RECOVERY_PAUSE_DURATION,
-                  recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION
+                  recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION // 3 seconds of blinking
                 };
               });
             }
@@ -388,14 +392,14 @@ const App: React.FC = () => {
         )}
 
         {gameState.status === GameStatus.COLLISION_PAUSE && (
-          <div className="absolute inset-0 flex items-center justify-center bg-red-950/20 backdrop-blur-[2px] pointer-events-none">
-            <h2 className="text-6xl font-black text-white italic drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] animate-pulse uppercase tracking-tighter">Crash</h2>
+          <div className="absolute inset-0 flex items-center justify-center bg-red-950/30 backdrop-blur-[4px] pointer-events-none z-[60]">
+            <h2 className="text-7xl font-black text-white italic drop-shadow-[0_0_25px_rgba(255,255,255,0.6)] animate-pulse uppercase tracking-tighter">Crash</h2>
           </div>
         )}
 
         {/* --- MOBILE CONTROLS --- */}
         {gameState.status === GameStatus.PLAYING && isTouchDevice && (
-          <div className="absolute bottom-0 left-0 right-0 h-48 flex justify-between items-end px-6 pb-8 pointer-events-none">
+          <div className="absolute bottom-0 left-0 right-0 h-52 flex justify-between items-end px-6 pb-10 pointer-events-none">
             <div className="flex gap-4 pointer-events-auto">
               <ControlBtn icon="L" onStart={() => handleInputStart('ArrowLeft')} onEnd={() => handleInputEnd('ArrowLeft')} />
               <ControlBtn icon="R" onStart={() => handleInputStart('ArrowRight')} onEnd={() => handleInputEnd('ArrowRight')} />
@@ -425,7 +429,7 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
   
   return (
     <div 
-      className="w-20 h-20 bg-slate-900/90 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-600/60 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)] touch-none"
+      className="w-24 h-24 bg-slate-900/90 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-600/70 active:scale-90 transition-all shadow-[0_0_20px_rgba(59,130,246,0.4)] touch-none"
       onPointerDown={(e) => { 
         e.preventDefault(); 
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -434,7 +438,7 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
       onPointerUp={(e) => { e.preventDefault(); onEnd(); }}
       onPointerCancel={(e) => { e.preventDefault(); onEnd(); }}
     >
-      <svg className="w-12 h-12 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+      <svg className="w-14 h-14 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
         <path strokeLinecap="round" strokeLinejoin="round" d={getPath()} />
       </svg>
     </div>
@@ -459,7 +463,7 @@ const GameCanvas: React.FC<{
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
-    // Grid with Glow Lines
+    // Grid
     ctx.strokeStyle = theme.grid;
     ctx.lineWidth = 1;
     for (let x = 0; x <= CANVAS_WIDTH; x += 50) {
@@ -474,7 +478,7 @@ const GameCanvas: React.FC<{
     ctx.fillStyle = theme.road;
     ctx.fillRect(roadX, 0, ROAD_WIDTH, CANVAS_HEIGHT);
     
-    // Road Markings with Pseudo-Glow
+    // Road Markings
     ctx.strokeStyle = theme.border;
     ctx.lineWidth = 4;
     ctx.setLineDash([40, 40]);
@@ -482,11 +486,9 @@ const GameCanvas: React.FC<{
     
     for (let i = 1; i < 4; i++) {
        const lx = roadX + (i * (ROAD_WIDTH / 4));
-       // Soft glow layer
        ctx.globalAlpha = 0.3;
        ctx.lineWidth = 8;
        ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
-       // Sharp layer
        ctx.globalAlpha = 1;
        ctx.lineWidth = 4;
        ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
@@ -494,7 +496,6 @@ const GameCanvas: React.FC<{
 
     ctx.setLineDash([]);
     ctx.strokeStyle = theme.border;
-    // Outer Border Pseudo-Glow
     ctx.lineWidth = 12; ctx.globalAlpha = 0.2;
     ctx.strokeRect(roadX, -10, ROAD_WIDTH, CANVAS_HEIGHT + 20);
     ctx.lineWidth = 6; ctx.globalAlpha = 1;
@@ -508,17 +509,14 @@ const GameCanvas: React.FC<{
     });
     ctx.globalAlpha = 1;
 
-    // Entities with High Performance Pseudo-Glow
+    // Entities
     entities.forEach(ent => {
       if (ent.type === EntityType.NPC_CAR) {
-        // Body Glow
         ctx.fillStyle = ent.color;
         ctx.globalAlpha = 0.2;
         ctx.beginPath(); ctx.roundRect(ent.position.x - ent.width/2 - 6, ent.position.y - ent.height/2 - 6, ent.width+12, ent.height+12, 12); ctx.fill();
         ctx.globalAlpha = 1;
-        // Body
         ctx.beginPath(); ctx.roundRect(ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 8); ctx.fill();
-        // Windows
         ctx.fillStyle = '#00000066';
         ctx.fillRect(ent.position.x - 18, ent.position.y - 25, 36, 12);
         ctx.fillRect(ent.position.x - 18, ent.position.y + 10, 36, 8);
@@ -528,57 +526,53 @@ const GameCanvas: React.FC<{
         ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3;
         ctx.strokeRect(ent.position.x - ent.width/2 + 6, ent.position.y - ent.height/2 + 6, ent.width - 12, ent.height - 12);
       } else {
-        // Bonus Star with pulsing glow
         const s = 1 + Math.sin(frameRef.current * 0.15) * 0.2;
         ctx.save(); ctx.translate(ent.position.x, ent.position.y); ctx.scale(s, s); ctx.rotate(frameRef.current * 0.05);
         ctx.fillStyle = COLORS.INVINCIBLE;
         ctx.globalAlpha = 0.3;
-        drawStar(ctx, 0, 0, 5, 24, 10); // Glow layer
+        drawStar(ctx, 0, 0, 5, 24, 10);
         ctx.globalAlpha = 1;
-        drawStar(ctx, 0, 0, 5, 18, 8); // Core layer
+        drawStar(ctx, 0, 0, 5, 18, 8);
         ctx.restore();
       }
     });
 
-    // Player Rendering (Restored Aesthetics)
+    // Player Rendering
     ctx.save();
     
+    // Enhanced Blinking Logic
+    let blinkVisible = true;
     if (isRecovering) {
-      ctx.globalAlpha = 0.3 + (Math.sin(frameRef.current * 0.5) + 1) * 0.3;
+      // Faster, distinct blinking (approx 10Hz)
+      blinkVisible = Math.floor(frameRef.current / 4) % 2 === 0;
     }
 
-    if (isInvincible) {
-      // Shield Glow
-      const shieldPulse = 1 + Math.sin(frameRef.current * 0.2) * 0.05;
-      ctx.save();
-      ctx.strokeStyle = COLORS.INVINCIBLE;
-      ctx.lineWidth = 4;
-      ctx.globalAlpha = 0.2;
-      ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 65 * shieldPulse, 0, Math.PI * 2); ctx.stroke();
-      ctx.globalAlpha = 0.1;
-      ctx.fillStyle = COLORS.INVINCIBLE;
-      ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 60 * shieldPulse, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
+    if (blinkVisible) {
+      if (isInvincible) {
+        const shieldPulse = 1 + Math.sin(frameRef.current * 0.2) * 0.05;
+        ctx.save();
+        ctx.strokeStyle = COLORS.INVINCIBLE;
+        ctx.lineWidth = 4;
+        ctx.globalAlpha = 0.2;
+        ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 65 * shieldPulse, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 0.1;
+        ctx.fillStyle = COLORS.INVINCIBLE;
+        ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 60 * shieldPulse, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+      
+      ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath(); ctx.roundRect(playerPosition.x - 28, playerPosition.y - 48, 56, 96, 14); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.roundRect(playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); ctx.fill();
+      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.5;
+      ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 15);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(playerPosition.x - 18, playerPosition.y + 30, 8, 4); 
+      ctx.fillRect(playerPosition.x + 10, playerPosition.y + 30, 8, 4);
     }
-    
-    // Player Body Glow Layer
-    ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
-    ctx.globalAlpha = 0.25;
-    ctx.beginPath(); ctx.roundRect(playerPosition.x - 28, playerPosition.y - 48, 56, 96, 14); ctx.fill();
-    ctx.globalAlpha = 1;
-
-    // Player Core
-    ctx.beginPath(); ctx.roundRect(playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); ctx.fill();
-    
-    // Details
-    ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.5;
-    ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 15); // Windshield
-    
-    // Brake lights
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#ff0000';
-    ctx.fillRect(playerPosition.x - 18, playerPosition.y + 30, 8, 4); 
-    ctx.fillRect(playerPosition.x + 10, playerPosition.y + 30, 8, 4);
     
     ctx.restore();
   }, [playerPosition, entities, roadOffset, isInvincible, isRecovering, isPaused, particles, level]);

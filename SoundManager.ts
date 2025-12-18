@@ -34,11 +34,11 @@ class SoundManager {
     this.engineGain = context.createGain();
     
     this.engineOsc.type = 'sawtooth';
-    this.engineOsc.frequency.setValueAtTime(40, context.currentTime);
+    this.engineOsc.frequency.setValueAtTime(45, context.currentTime);
     
     const filter = context.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(200, context.currentTime);
+    filter.frequency.setValueAtTime(250, context.currentTime);
 
     this.engineOsc.connect(filter);
     filter.connect(this.engineGain);
@@ -52,11 +52,12 @@ class SoundManager {
     const context = this.ctx;
     if (!context || !this.engineOsc || !this.engineGain) return;
     
-    const targetFreq = 40 + (speed * 15);
-    const targetGain = active ? 0.15 : 0;
+    // Increased targetGain from 0.15 to 0.45 for much better audibility
+    const targetFreq = 45 + (speed * 18);
+    const targetGain = active ? 0.45 : 0;
     
     this.engineOsc.frequency.setTargetAtTime(targetFreq, context.currentTime, 0.1);
-    this.engineGain.gain.setTargetAtTime(targetGain, context.currentTime, 0.2);
+    this.engineGain.gain.setTargetAtTime(targetGain, context.currentTime, 0.15);
   }
 
   playStar() {
@@ -70,7 +71,6 @@ class SoundManager {
     osc.frequency.setValueAtTime(440, context.currentTime);
     osc.frequency.exponentialRampToValueAtTime(1200, context.currentTime + 0.2);
     
-    // Smooth ramp up to avoid clicks
     gain.gain.setValueAtTime(0.001, context.currentTime);
     gain.gain.linearRampToValueAtTime(0.5, context.currentTime + 0.05);
     gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.3);
@@ -101,7 +101,7 @@ class SoundManager {
 
     const gain = context.createGain();
     gain.gain.setValueAtTime(0.001, context.currentTime);
-    gain.gain.linearRampToValueAtTime(0.7, context.currentTime + 0.02);
+    gain.gain.linearRampToValueAtTime(0.8, context.currentTime + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.3);
 
     noise.connect(filter);
@@ -134,7 +134,7 @@ class SoundManager {
       osc.frequency.setValueAtTime(f, startTime);
       
       gain.gain.setValueAtTime(0.001, startTime);
-      gain.gain.linearRampToValueAtTime(0.3, startTime + 0.02);
+      gain.gain.linearRampToValueAtTime(0.4, startTime + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
       
       osc.connect(gain);
@@ -156,7 +156,6 @@ class SoundManager {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(60 + (level * 10), this.ctx.currentTime);
       
-      // Smooth envelopes for BGM beat to prevent periodic clicking
       g.gain.setValueAtTime(0.001, this.ctx.currentTime);
       g.gain.linearRampToValueAtTime(0.12, this.ctx.currentTime + 0.05);
       g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.4);
