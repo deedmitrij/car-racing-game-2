@@ -6,90 +6,106 @@ class SoundManager {
   private bgmInterval: any = null;
 
   async init() {
+    // If context already exists, just ensure it's running
     if (this.ctx) {
       if (this.ctx.state === 'suspended') {
         await this.ctx.resume();
       }
       return;
     }
+
+    // Create new context
     const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
-    this.ctx = new AudioCtx();
+    if (!AudioCtx) return;
+    
+    const context = new AudioCtx() as AudioContext;
+    this.ctx = context;
+    
     this.setupEngine();
-    if (this.ctx.state === 'suspended') {
-      await this.ctx.resume();
+    
+    if (context.state === 'suspended') {
+      await context.resume();
     }
   }
 
   private setupEngine() {
-    if (!this.ctx) return;
-    this.engineOsc = this.ctx.createOscillator();
-    this.engineGain = this.ctx.createGain();
+    const context = this.ctx;
+    if (!context) return;
+
+    this.engineOsc = context.createOscillator();
+    this.engineGain = context.createGain();
     
     this.engineOsc.type = 'sawtooth';
-    this.engineOsc.frequency.setValueAtTime(40, this.ctx.currentTime);
+    this.engineOsc.frequency.setValueAtTime(40, context.currentTime);
     
-    const filter = this.ctx.createBiquadFilter();
+    const filter = context.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(200, this.ctx.currentTime);
+    filter.frequency.setValueAtTime(200, context.currentTime);
 
     this.engineOsc.connect(filter);
     filter.connect(this.engineGain);
-    this.engineGain.connect(this.ctx.destination);
+    this.engineGain.connect(context.destination);
     
-    this.engineGain.gain.setValueAtTime(0, this.ctx.currentTime);
+    this.engineGain.gain.setValueAtTime(0, context.currentTime);
     this.engineOsc.start();
   }
 
   setEngineSpeed(speed: number, active: boolean) {
-    if (!this.ctx || !this.engineOsc || !this.engineGain) return;
+    const context = this.ctx;
+    if (!context || !this.engineOsc || !this.engineGain) return;
+    
     const targetFreq = 40 + (speed * 15);
     const targetGain = active ? 0.05 : 0;
     
-    this.engineOsc.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.1);
-    this.engineGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.2);
+    this.engineOsc.frequency.setTargetAtTime(targetFreq, context.currentTime, 0.1);
+    this.engineGain.gain.setTargetAtTime(targetGain, context.currentTime, 0.2);
   }
 
   playStar() {
-    if (!this.ctx) return;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
+    const context = this.ctx;
+    if (!context) return;
+    
+    const osc = context.createOscillator();
+    const gain = context.createGain();
     
     osc.type = 'triangle';
-    osc.frequency.setValueAtTime(440, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(1200, this.ctx.currentTime + 0.2);
+    osc.frequency.setValueAtTime(440, context.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1200, context.currentTime + 0.2);
     
-    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+    gain.gain.setValueAtTime(0.2, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
     
     osc.connect(gain);
-    gain.connect(this.ctx.destination);
+    gain.connect(context.destination);
     osc.start();
-    osc.stop(this.ctx.currentTime + 0.3);
+    osc.stop(context.currentTime + 0.3);
   }
 
   playCrash() {
-    if (!this.ctx) return;
-    const bufferSize = this.ctx.sampleRate * 0.3;
-    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const context = this.ctx;
+    if (!context) return;
+    
+    const bufferSize = context.sampleRate * 0.3;
+    const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
       data[i] = Math.random() * 2 - 1;
     }
     
-    const noise = this.ctx.createBufferSource();
+    const noise = context.createBufferSource();
     noise.buffer = buffer;
     
-    const filter = this.ctx.createBiquadFilter();
+    const filter = context.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(400, this.ctx.currentTime);
+    filter.frequency.setValueAtTime(400, context.currentTime);
 
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.3, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
 
     noise.connect(filter);
     filter.connect(gain);
-    gain.connect(this.ctx.destination);
+    gain.connect(context.destination);
     noise.start();
   }
 
@@ -106,23 +122,26 @@ class SoundManager {
   }
 
   private playMelody(freqs: number[], duration: number, type: OscillatorType = 'triangle') {
-    if (!this.ctx) return;
+    const context = this.ctx;
+    if (!context) return;
+    
     freqs.forEach((f, i) => {
-      const osc = this.ctx!.createOscillator();
-      const gain = this.ctx!.createGain();
+      const osc = context.createOscillator();
+      const gain = context.createGain();
       osc.type = type;
-      osc.frequency.setValueAtTime(f, this.ctx!.currentTime + i * duration);
-      gain.gain.setValueAtTime(0.1, this.ctx!.currentTime + i * duration);
-      gain.gain.exponentialRampToValueAtTime(0.01, this.ctx!.currentTime + (i + 1) * duration);
+      osc.frequency.setValueAtTime(f, context.currentTime + i * duration);
+      gain.gain.setValueAtTime(0.1, context.currentTime + i * duration);
+      gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + (i + 1) * duration);
       osc.connect(gain);
-      gain.connect(this.ctx!.destination);
-      osc.start(this.ctx!.currentTime + i * duration);
-      osc.stop(this.ctx!.currentTime + (i + 1) * duration);
+      gain.connect(context.destination);
+      osc.start(context.currentTime + i * duration);
+      osc.stop(context.currentTime + (i + 1) * duration);
     });
   }
 
   startBGM(level: number) {
-    if (!this.ctx) return;
+    const context = this.ctx;
+    if (!context) return;
     this.stopBGM();
     
     const loop = () => {

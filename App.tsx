@@ -70,8 +70,8 @@ const App: React.FC = () => {
       const h = window.innerHeight;
       const scaleW = w / CANVAS_WIDTH;
       const scaleH = h / CANVAS_HEIGHT;
-      // Fit to screen while maintaining aspect ratio
-      setScale(Math.min(scaleW, scaleH));
+      // Subtract a small buffer for browser UI bars
+      setScale(Math.min(scaleW, scaleH) * 0.98);
     };
 
     const checkTouch = () => {
@@ -101,7 +101,7 @@ const App: React.FC = () => {
 
   const startLevel = async (level: number) => {
     clearInputs();
-    await soundManager.init(); // Explicitly init and resume audio context
+    await soundManager.init();
     soundManager.startBGM(level);
     setGameState(prev => ({
       ...prev,
@@ -384,23 +384,23 @@ const App: React.FC = () => {
 
         {gameState.status === GameStatus.COLLISION_PAUSE && (
           <div className="absolute inset-0 flex items-center justify-center bg-red-950/20 backdrop-blur-[2px] pointer-events-none">
-            <h2 className="text-6xl font-black text-white italic drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] animate-pulse">CRASH</h2>
+            <h2 className="text-6xl font-black text-white italic drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] animate-pulse uppercase tracking-tighter">Crash</h2>
           </div>
         )}
 
-        {/* --- IMPROVED MOBILE CONTROLS --- */}
+        {/* --- ERGONOMIC MOBILE CONTROLS (SPLIT LAYOUT) --- */}
         {gameState.status === GameStatus.PLAYING && isTouchDevice && (
-          <div className="absolute bottom-0 left-0 right-0 h-64 flex justify-between items-end px-6 pb-12 pointer-events-none">
-            {/* LEFT SIDE: Steering */}
+          <div className="absolute bottom-0 left-0 right-0 h-48 flex justify-between items-end px-4 pb-8 pointer-events-none">
+            {/* Left Side: Steering (Left/Right) */}
             <div className="flex gap-4 pointer-events-auto">
               <ControlBtn icon="L" onStart={() => handleInputStart('ArrowLeft')} onEnd={() => handleInputEnd('ArrowLeft')} />
               <ControlBtn icon="R" onStart={() => handleInputStart('ArrowRight')} onEnd={() => handleInputEnd('ArrowRight')} />
             </div>
 
-            {/* RIGHT SIDE: Gas/Brake */}
+            {/* Right Side: Speed (Up/Down) */}
             <div className="flex gap-4 pointer-events-auto">
-              <ControlBtn icon="U" onStart={() => handleInputStart('ArrowUp')} onEnd={() => handleInputEnd('ArrowUp')} />
-              <ControlBtn icon="D" onStart={() => handleInputStart('ArrowDown')} onEnd={() => handleInputEnd('ArrowDown')} />
+              <ControlBtn icon="U" onStart={() => handleInputStart('ArrowUp')} onEnd={() => handleInputStart('ArrowUp')} />
+              <ControlBtn icon="D" onStart={() => handleInputStart('ArrowDown')} onEnd={() => handleInputStart('ArrowDown')} />
             </div>
           </div>
         )}
@@ -416,17 +416,18 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
       case 'R': return "M9 5l7 7-7 7";
       case 'U': return "M5 15l7-7 7 7";
       case 'D': return "M19 9l-7 7-7-7";
+      default: return "";
     }
   };
   return (
     <div 
-      className="w-24 h-24 bg-slate-900/60 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-500/40 active:scale-95 transition-all shadow-lg touch-none"
-      onPointerDown={onStart}
-      onPointerUp={onEnd}
-      onPointerLeave={onEnd}
-      onPointerCancel={onEnd}
+      className="w-20 h-20 bg-slate-900/60 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-500/40 active:scale-90 transition-all shadow-lg touch-none"
+      onPointerDown={(e) => { e.preventDefault(); onStart(); }}
+      onPointerUp={(e) => { e.preventDefault(); onEnd(); }}
+      onPointerLeave={(e) => { e.preventDefault(); onEnd(); }}
+      onPointerCancel={(e) => { e.preventDefault(); onEnd(); }}
     >
-      <svg className="w-12 h-12 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+      <svg className="w-10 h-10 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
         <path strokeLinecap="round" strokeLinejoin="round" d={getPath()} />
       </svg>
     </div>
