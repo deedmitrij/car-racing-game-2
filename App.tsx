@@ -60,6 +60,11 @@ const App: React.FC = () => {
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const lastSpawnTime = useRef<number>(0);
 
+  // Clear all pressed keys to prevent "stuck" movement
+  const clearInputs = useCallback(() => {
+    keysPressed.current = {};
+  }, []);
+
   // Handle Responsive Scaling and Mobile Detection
   useEffect(() => {
     const handleResize = () => {
@@ -76,8 +81,12 @@ const App: React.FC = () => {
     handleResize();
     checkTouch();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    window.addEventListener('blur', clearInputs); // Clear inputs if window loses focus
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('blur', clearInputs);
+    };
+  }, [clearInputs]);
 
   const createParticles = (x: number, y: number, color: string, count: number) => {
     for (let i = 0; i < count; i++) {
@@ -91,7 +100,8 @@ const App: React.FC = () => {
   };
 
   const startLevel = (level: number) => {
-    soundManager.init(); // Initialize audio context on user interaction
+    clearInputs(); // Ensure no leftover keys from menu interaction
+    soundManager.init();
     soundManager.startBGM(level);
     setGameState(prev => ({
       ...prev,
@@ -107,6 +117,7 @@ const App: React.FC = () => {
   };
 
   const restartGame = () => {
+    clearInputs();
     soundManager.stopBGM();
     setGameState(prev => ({
       ...prev,
@@ -138,7 +149,6 @@ const App: React.FC = () => {
         const config = LEVEL_CONFIGS[gameState.level - 1];
         const theme = LEVEL_THEMES[gameState.level - 1];
 
-        // Engine sound modulation
         soundManager.setEngineSpeed(config.speed, true);
 
         setGameState(prev => {
@@ -284,9 +294,11 @@ const App: React.FC = () => {
         soundManager.setEngineSpeed(0, false);
         setGameState(prev => {
           const nextRec = prev.recoveryTime - deltaTime;
+          let nextRecInvTime = prev.recoveryInvincibilityTime - deltaTime;
           return { 
             ...prev, 
-            recoveryTime: Math.max(0, nextRec), 
+            recoveryTime: Math.max(0, nextRec),
+            recoveryInvincibilityTime: Math.max(0, nextRecInvTime),
             status: nextRec <= 0 ? GameStatus.PLAYING : prev.status 
           };
         });
@@ -296,7 +308,7 @@ const App: React.FC = () => {
     }
     lastTimeRef.current = time;
     requestRef.current = requestAnimationFrame(update);
-  }, [gameState, entities, playerPosition, shake]);
+  }, [gameState, entities, playerPosition, shake, clearInputs]);
 
   useEffect(() => {
     const onKD = (e: KeyboardEvent) => { keysPressed.current[e.key] = true; };
@@ -312,7 +324,7 @@ const App: React.FC = () => {
     };
   }, [update]);
 
-  const handleInputStart = (key: string) => { handleInputStart; keysPressed.current[key] = true; };
+  const handleInputStart = (key: string) => { keysPressed.current[key] = true; };
   const handleInputEnd = (key: string) => { keysPressed.current[key] = false; };
 
   return (
@@ -442,7 +454,8 @@ const GameCanvas: React.FC<{
   useEffect(() => {
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
-    if (!isPaused) frameRef.current++;
+    
+    frameRef.current++;
 
     ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
@@ -504,19 +517,41 @@ const GameCanvas: React.FC<{
       ctx.shadowBlur = 0;
     });
 
-    // Player
-    const isBlinking = isRecovering && (Math.floor(frameRef.current / 4) % 2 === 0);
-    if (!isBlinking) {
-      if (isInvincible) {
-        ctx.globalAlpha = 0.4; ctx.fillStyle = COLORS.INVINCIBLE;
-        ctx.fillRect(playerPosition.x - 22, playerPosition.y + 30, 44, 60); ctx.globalAlpha = 1;
-      }
-      ctx.shadowBlur = 25; ctx.shadowColor = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
-      ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
-      ctx.beginPath(); ctx.roundRect(playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); ctx.fill();
-      ctx.fillStyle = '#ffffff33'; ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 20);
-      ctx.fillStyle = '#ff4444'; ctx.fillRect(playerPosition.x - 18, playerPosition.y + 30, 8, 4); ctx.fillRect(playerPosition.x + 10, playerPosition.y + 30, 8, 4);
+    // Player Rendering
+    ctx.save();
+    
+    if (isRecovering) {
+      const alphaPulse = 0.3 + (Math.sin(frameRef.current * 0.4) + 1) * 0.3;
+      ctx.globalAlpha = alphaPulse;
     }
+
+    if (isInvincible) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = COLORS.INVINCIBLE;
+      ctx.shadowBlur = 20;
+      ctx.shadowColor = COLORS.INVINCIBLE;
+      ctx.beginPath();
+      ctx.arc(playerPosition.x, playerPosition.y, 60, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    
+    ctx.shadowBlur = 25; 
+    ctx.shadowColor = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
+    ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
+    ctx.beginPath(); 
+    ctx.roundRect(playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); 
+    ctx.fill();
+    
+    ctx.fillStyle = '#ffffff33'; 
+    ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 20);
+    
+    ctx.fillStyle = '#ff4444'; 
+    ctx.fillRect(playerPosition.x - 18, playerPosition.y + 30, 8, 4); 
+    ctx.fillRect(playerPosition.x + 10, playerPosition.y + 30, 8, 4);
+    
+    ctx.restore();
     ctx.shadowBlur = 0;
   }, [playerPosition, entities, roadOffset, isInvincible, isRecovering, isPaused, particles, level]);
 
