@@ -3,7 +3,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Neon Turbo Racer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -15,9 +15,21 @@
         color: #fff;
         font-family: 'Orbitron', sans-serif;
         overflow: hidden;
+        overscroll-behavior: none;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      #root {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-center;
       }
       canvas {
         display: block;
+        touch-action: none;
       }
     </style>
   <script type="importmap">
@@ -34,7 +46,6 @@
 </head>
   <body>
     <div id="root"></div>
-    <!-- Entry point for the application -->
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

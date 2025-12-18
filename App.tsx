@@ -33,6 +33,22 @@ interface Particle {
   color: string;
 }
 
+/**
+ * Safari 15 and below don't support roundRect. 
+ * This helper ensures the game renders correctly on older browsers.
+ */
+const drawRoundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
+  if (w < 2 * r) r = w / 2;
+  if (h < 2 * r) r = h / 2;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+};
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
     status: GameStatus.START,
@@ -47,21 +63,25 @@ const App: React.FC = () => {
     recoveryTime: 0,
   });
 
-  const [entities, setEntities] = useState<Entity[]>([]);
-  const [playerPosition, setPlayerPosition] = useState({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 });
-  const [roadOffset, setRoadOffset] = useState(0);
-  const [shake, setShake] = useState(0);
   const [scale, setScale] = useState(1);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   
-  // High-frequency guards and buffers
+  // High-frequency refs to keep the loop stable and avoid React thrashing on Safari
+  const playerPosRef = useRef({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 });
+  const entitiesRef = useRef<Entity[]>([]);
+  const roadOffsetRef = useRef(0);
   const isHarmableRef = useRef(true);
   const scoreBuffer = useRef(0);
+  const shakeRef = useRef(0);
   const particlesRef = useRef<Particle[]>([]);
   const requestRef = useRef<number | undefined>(undefined);
   const lastTimeRef = useRef<number | undefined>(undefined);
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const lastSpawnTime = useRef<number>(0);
+  
+  // Mirror state in a ref for access within the stable update loop
+  const stateRef = useRef(gameState);
+  useEffect(() => { stateRef.current = gameState; }, [gameState]);
 
   const clearInputs = useCallback(() => {
     keysPressed.current = {};
@@ -104,13 +124,13 @@ const App: React.FC = () => {
   const startLevel = async (level: number) => {
     clearInputs();
     isHarmableRef.current = true;
+    shakeRef.current = 0;
     
-    // Explicitly reset or carry over score/lives based on level
     const isFirstLevel = level === 1;
     if (isFirstLevel) {
       scoreBuffer.current = 0;
     } else {
-      scoreBuffer.current = gameState.score;
+      scoreBuffer.current = stateRef.current.score;
     }
 
     await soundManager.init();
@@ -129,14 +149,15 @@ const App: React.FC = () => {
       recoveryTime: 0,
     }));
 
-    setEntities([]);
-    setPlayerPosition({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 });
+    entitiesRef.current = [];
+    playerPosRef.current = { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 };
   };
 
   const restartGame = () => {
     clearInputs();
     scoreBuffer.current = 0;
     isHarmableRef.current = true;
+    shakeRef.current = 0;
     soundManager.stopBGM();
     setGameState(prev => ({
       ...prev,
@@ -150,11 +171,13 @@ const App: React.FC = () => {
       recoveryInvincibilityTime: 0,
       recoveryTime: 0,
     }));
-    setEntities([]);
+    entitiesRef.current = [];
     particlesRef.current = [];
   };
 
   const update = useCallback((time: number) => {
+    const gameState = stateRef.current;
+    
     if (lastTimeRef.current !== undefined) {
       const deltaTime = (time - lastTimeRef.current) / 1000;
 
@@ -166,7 +189,7 @@ const App: React.FC = () => {
         p.x += p.vx; p.y += p.vy; p.life -= deltaTime * 2;
       });
       particlesRef.current = particlesRef.current.filter(p => p.life > 0);
-      if (shake > 0) setShake(prev => Math.max(0, prev - deltaTime * 40));
+      if (shakeRef.current > 0) shakeRef.current = Math.max(0, shakeRef.current - deltaTime * 40);
 
       // 2. Main Game Logic
       if (gameState.status === GameStatus.PLAYING) {
@@ -175,99 +198,95 @@ const App: React.FC = () => {
 
         // Movement Logic
         const moveSpeed = 8;
-        setPlayerPosition(prev => {
-          let nx = prev.x;
-          let ny = prev.y;
-          if (keysPressed.current['ArrowLeft'] || keysPressed.current['a']) nx -= moveSpeed;
-          if (keysPressed.current['ArrowRight'] || keysPressed.current['d']) nx += moveSpeed;
-          if (keysPressed.current['ArrowUp'] || keysPressed.current['w']) ny -= moveSpeed * 0.8;
-          if (keysPressed.current['ArrowDown'] || keysPressed.current['s']) ny += moveSpeed * 0.8;
+        let nx = playerPosRef.current.x;
+        let ny = playerPosRef.current.y;
+        if (keysPressed.current['ArrowLeft'] || keysPressed.current['a']) nx -= moveSpeed;
+        if (keysPressed.current['ArrowRight'] || keysPressed.current['d']) nx += moveSpeed;
+        if (keysPressed.current['ArrowUp'] || keysPressed.current['w']) ny -= moveSpeed * 0.8;
+        if (keysPressed.current['ArrowDown'] || keysPressed.current['s']) ny += moveSpeed * 0.8;
 
-          const roadX = (CANVAS_WIDTH - ROAD_WIDTH) / 2;
-          const leftBound = roadX + PLAYER_SIZE.width / 2 + 10;
-          const rightBound = roadX + ROAD_WIDTH - PLAYER_SIZE.width / 2 - 10;
-          const topBound = PLAYER_SIZE.height / 2 + 20;
-          const bottomBound = CANVAS_HEIGHT - PLAYER_SIZE.height / 2 - 20;
+        const roadX = (CANVAS_WIDTH - ROAD_WIDTH) / 2;
+        const leftBound = roadX + PLAYER_SIZE.width / 2 + 10;
+        const rightBound = roadX + ROAD_WIDTH - PLAYER_SIZE.width / 2 - 10;
+        const topBound = PLAYER_SIZE.height / 2 + 20;
+        const bottomBound = CANVAS_HEIGHT - PLAYER_SIZE.height / 2 - 20;
 
-          nx = Math.max(leftBound, Math.min(rightBound, nx));
-          ny = Math.max(topBound, Math.min(bottomBound, ny));
-          return { x: nx, y: ny };
-        });
+        playerPosRef.current = {
+          x: Math.max(leftBound, Math.min(rightBound, nx)),
+          y: Math.max(topBound, Math.min(bottomBound, ny))
+        };
 
-        setRoadOffset(prev => (prev + config.speed) % 80);
+        roadOffsetRef.current = (roadOffsetRef.current + config.speed) % 80;
 
         // Entity Management & Passing Score
         let pointsFromPassing = 0;
         let pickedUpBonus = false;
         let crashed = false;
 
-        setEntities(prev => {
-          const next = prev.map(e => ({ ...e, position: { ...e.position, y: e.position.y + config.speed } }));
-          const filtered = [];
+        const nextEntities = entitiesRef.current.map(e => ({ ...e, position: { ...e.position, y: e.position.y + config.speed } }));
+        const filteredEntities: Entity[] = [];
+        
+        for (const e of nextEntities) {
+          if (e.position.y - e.height / 2 > CANVAS_HEIGHT) {
+            if (e.type === EntityType.NPC_CAR || e.type === EntityType.OBSTACLE) {
+              pointsFromPassing += 250; 
+            }
+          } else {
+            filteredEntities.push(e);
+          }
+        }
+
+        // Spawn New Entities
+        if (time - lastSpawnTime.current > 600) {
+          const lane = LANES[Math.floor(Math.random() * LANES.length)];
+          const isLaneOccupied = filteredEntities.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 200);
           
-          for (const e of next) {
-            if (e.position.y - e.height / 2 > CANVAS_HEIGHT) {
-              if (e.type === EntityType.NPC_CAR || e.type === EntityType.OBSTACLE) {
-                pointsFromPassing += 250; 
-              }
-            } else {
-              filtered.push(e);
+          if (!isLaneOccupied) {
+            const theme = LEVEL_THEMES[gameState.level - 1];
+            const rand = Math.random();
+            if (rand < config.trafficDensity) {
+              filteredEntities.push({
+                id: Math.random().toString(), type: EntityType.NPC_CAR,
+                position: { x: lane, y: -100 }, width: NPC_CAR_SIZE.width, height: NPC_CAR_SIZE.height,
+                speed: config.speed, color: theme.npc[Math.floor(Math.random() * theme.npc.length)]
+              });
+              lastSpawnTime.current = time;
+            } else if (rand < config.trafficDensity + config.obstacleDensity) {
+              filteredEntities.push({
+                id: Math.random().toString(), type: EntityType.OBSTACLE,
+                position: { x: lane, y: -100 }, width: OBSTACLE_SIZE.width, height: OBSTACLE_SIZE.height,
+                speed: config.speed, color: COLORS.OBSTACLE
+              });
+              lastSpawnTime.current = time;
+            } else if (rand < config.trafficDensity + config.obstacleDensity + config.bonusDensity) {
+              filteredEntities.push({
+                id: Math.random().toString(), type: EntityType.BONUS,
+                position: { x: lane, y: -100 }, width: BONUS_SIZE.width, height: BONUS_SIZE.height,
+                speed: config.speed, color: COLORS.INVINCIBLE
+              });
+              lastSpawnTime.current = time;
             }
           }
+        }
+        entitiesRef.current = filteredEntities;
 
-          // Spawn New Entities
-          if (time - lastSpawnTime.current > 600) {
-            const lane = LANES[Math.floor(Math.random() * LANES.length)];
-            const isLaneOccupied = filtered.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 200);
-            
-            if (!isLaneOccupied) {
-              const theme = LEVEL_THEMES[gameState.level - 1];
-              const rand = Math.random();
-              if (rand < config.trafficDensity) {
-                filtered.push({
-                  id: Math.random().toString(), type: EntityType.NPC_CAR,
-                  position: { x: lane, y: -100 }, width: NPC_CAR_SIZE.width, height: NPC_CAR_SIZE.height,
-                  speed: config.speed, color: theme.npc[Math.floor(Math.random() * theme.npc.length)]
-                });
-                lastSpawnTime.current = time;
-              } else if (rand < config.trafficDensity + config.obstacleDensity) {
-                filtered.push({
-                  id: Math.random().toString(), type: EntityType.OBSTACLE,
-                  position: { x: lane, y: -100 }, width: OBSTACLE_SIZE.width, height: OBSTACLE_SIZE.height,
-                  speed: config.speed, color: COLORS.OBSTACLE
-                });
-                lastSpawnTime.current = time;
-              } else if (rand < config.trafficDensity + config.obstacleDensity + config.bonusDensity) {
-                filtered.push({
-                  id: Math.random().toString(), type: EntityType.BONUS,
-                  position: { x: lane, y: -100 }, width: BONUS_SIZE.width, height: BONUS_SIZE.height,
-                  speed: config.speed, color: COLORS.INVINCIBLE
-                });
-                lastSpawnTime.current = time;
-              }
-            }
-          }
-          return filtered;
-        });
-
-        // Collision Check - Uses synchronous isHarmableRef to prevent multi-subtraction
+        // Collision Check
         if (isHarmableRef.current) {
-          for (const entity of entities) {
-            const dx = Math.abs(playerPosition.x - entity.position.x);
-            const dy = Math.abs(playerPosition.y - entity.position.y);
+          for (const entity of entitiesRef.current) {
+            const dx = Math.abs(playerPosRef.current.x - entity.position.x);
+            const dy = Math.abs(playerPosRef.current.y - entity.position.y);
             if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
               if (entity.type === EntityType.BONUS) {
                 pickedUpBonus = true;
                 soundManager.playStar();
                 createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
-                setEntities(prev => prev.filter(e => e.id !== entity.id));
+                entitiesRef.current = entitiesRef.current.filter(e => e.id !== entity.id);
               } else {
-                // Crash detected! Immediately set ref to false to block further hits until state updates
                 isHarmableRef.current = false;
                 crashed = true;
                 soundManager.playCrash();
-                setShake(25);
-                createParticles(playerPosition.x, playerPosition.y, '#ff3333', 35);
+                shakeRef.current = 25;
+                createParticles(playerPosRef.current.x, playerPosRef.current.y, '#ff3333', 35);
                 break; 
               }
             }
@@ -302,7 +321,6 @@ const App: React.FC = () => {
             };
           }
 
-          // Accumulate scores accurately (capped at total points to avoid overflow display bugs)
           const timeScore = config.speed * 50 * deltaTime;
           const bonusScore = pickedUpBonus ? 1000 : 0;
           scoreBuffer.current = prev.score + timeScore + pointsFromPassing + bonusScore;
@@ -335,7 +353,7 @@ const App: React.FC = () => {
     }
     lastTimeRef.current = time;
     requestRef.current = requestAnimationFrame(update);
-  }, [gameState, entities, playerPosition, shake, clearInputs]);
+  }, []); // Stable loop
 
   useEffect(() => {
     const onKD = (e: KeyboardEvent) => { keysPressed.current[e.key] = true; };
@@ -347,7 +365,7 @@ const App: React.FC = () => {
     return () => {
       window.removeEventListener('keydown', onKD);
       window.removeEventListener('keyup', onKU);
-      cancelAnimationFrame(requestRef.current!);
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
   }, [update]);
 
@@ -364,16 +382,16 @@ const App: React.FC = () => {
         style={{ 
           width: CANVAS_WIDTH, 
           height: CANVAS_HEIGHT,
-          transform: `translate(-50%, -50%) scale(${scale}) translate(${Math.random() * shake - shake/2}px, ${Math.random() * shake - shake/2}px)`,
+          transform: `translate(-50%, -50%) scale(${scale}) translate(${Math.random() * shakeRef.current - shakeRef.current/2}px, ${Math.random() * shakeRef.current - shakeRef.current/2}px)`,
           touchAction: 'none'
         }}
       >
         <GameCanvas 
-          playerPosition={playerPosition} entities={entities} roadOffset={roadOffset}
+          playerPosRef={playerPosRef} entitiesRef={entitiesRef} roadOffsetRef={roadOffsetRef}
           isInvincible={gameState.isInvincible} 
           isRecovering={gameState.recoveryInvincibilityTime > 0}
           isPaused={gameState.status === GameStatus.COLLISION_PAUSE}
-          particles={particlesRef.current}
+          particlesRef={particlesRef}
           level={gameState.level}
         />
         
@@ -420,7 +438,6 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* --- MOBILE CONTROLS --- */}
         {showMobileControls && (
           <div className={`absolute bottom-0 left-0 right-0 h-52 flex justify-between items-end px-6 pb-10 transition-opacity duration-300 pointer-events-auto z-[70] ${gameState.status === GameStatus.COLLISION_PAUSE ? 'opacity-40' : 'opacity-100'}`}>
             <div className="flex gap-4">
@@ -468,18 +485,24 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
 };
 
 const GameCanvas: React.FC<{
-  playerPosition: {x: number, y: number}, entities: Entity[], roadOffset: number,
-  isInvincible: boolean, isRecovering: boolean, isPaused: boolean, particles: Particle[], level: number
-}> = ({ playerPosition, entities, roadOffset, isInvincible, isRecovering, isPaused, particles, level }) => {
+  playerPosRef: React.RefObject<{x: number, y: number}>, entitiesRef: React.RefObject<Entity[]>, 
+  roadOffsetRef: React.RefObject<number>, isInvincible: boolean, isRecovering: boolean, 
+  isPaused: boolean, particlesRef: React.RefObject<Particle[]>, level: number
+}> = ({ playerPosRef, entitiesRef, roadOffsetRef, isInvincible, isRecovering, isPaused, particlesRef, level }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frameRef = useRef(0);
-  const theme = LEVEL_THEMES[level - 1];
+  const animFrameRef = useRef<number>(0);
+  const theme = LEVEL_THEMES[Math.max(0, level - 1)];
 
-  useEffect(() => {
+  const draw = useCallback(() => {
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
     
-    frameRef.current++;
+    animFrameRef.current++;
+    const frame = animFrameRef.current;
+    const playerPosition = playerPosRef.current!;
+    const entities = entitiesRef.current!;
+    const roadOffset = roadOffsetRef.current!;
+    const particles = particlesRef.current!;
 
     // Base Background
     ctx.fillStyle = '#020617';
@@ -527,7 +550,7 @@ const GameCanvas: React.FC<{
     particles.forEach(p => {
       ctx.globalAlpha = p.life;
       ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 3 * p.life, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.1, 3 * p.life), 0, Math.PI * 2); ctx.fill();
     });
     ctx.globalAlpha = 1;
 
@@ -536,20 +559,20 @@ const GameCanvas: React.FC<{
       if (ent.type === EntityType.NPC_CAR) {
         ctx.fillStyle = ent.color;
         ctx.globalAlpha = 0.2;
-        ctx.beginPath(); ctx.roundRect(ent.position.x - ent.width/2 - 6, ent.position.y - ent.height/2 - 6, ent.width+12, ent.height+12, 12); ctx.fill();
+        drawRoundRect(ctx, ent.position.x - ent.width/2 - 6, ent.position.y - ent.height/2 - 6, ent.width+12, ent.height+12, 12); ctx.fill();
         ctx.globalAlpha = 1;
-        ctx.beginPath(); ctx.roundRect(ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 8); ctx.fill();
+        drawRoundRect(ctx, ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 8); ctx.fill();
         ctx.fillStyle = '#00000066';
         ctx.fillRect(ent.position.x - 18, ent.position.y - 25, 36, 12);
         ctx.fillRect(ent.position.x - 18, ent.position.y + 10, 36, 8);
       } else if (ent.type === EntityType.OBSTACLE) {
         ctx.fillStyle = ent.color;
-        ctx.beginPath(); ctx.roundRect(ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 4); ctx.fill();
+        drawRoundRect(ctx, ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 4); ctx.fill();
         ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3;
         ctx.strokeRect(ent.position.x - ent.width/2 + 6, ent.position.y - ent.height/2 + 6, ent.width - 12, ent.height - 12);
       } else {
-        const s = 1 + Math.sin(frameRef.current * 0.15) * 0.2;
-        ctx.save(); ctx.translate(ent.position.x, ent.position.y); ctx.scale(s, s); ctx.rotate(frameRef.current * 0.05);
+        const s = 1 + Math.sin(frame * 0.15) * 0.2;
+        ctx.save(); ctx.translate(ent.position.x, ent.position.y); ctx.scale(s, s); ctx.rotate(frame * 0.05);
         ctx.fillStyle = COLORS.INVINCIBLE;
         ctx.globalAlpha = 0.3;
         drawStar(ctx, 0, 0, 5, 24, 10);
@@ -561,17 +584,12 @@ const GameCanvas: React.FC<{
 
     // Player Rendering
     ctx.save();
-    
-    // Blinking Logic
     let blinkVisible = true;
-    if (isRecovering) {
-      // Clear, readable blink pattern
-      blinkVisible = Math.floor(frameRef.current / 5) % 2 === 0;
-    }
+    if (isRecovering) blinkVisible = Math.floor(frame / 5) % 2 === 0;
 
     if (blinkVisible) {
       if (isInvincible) {
-        const shieldPulse = 1 + Math.sin(frameRef.current * 0.2) * 0.05;
+        const shieldPulse = 1 + Math.sin(frame * 0.2) * 0.05;
         ctx.save();
         ctx.strokeStyle = COLORS.INVINCIBLE;
         ctx.lineWidth = 4;
@@ -585,9 +603,9 @@ const GameCanvas: React.FC<{
       
       ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
       ctx.globalAlpha = 0.25;
-      ctx.beginPath(); ctx.roundRect(playerPosition.x - 28, playerPosition.y - 48, 56, 96, 14); ctx.fill();
+      drawRoundRect(ctx, playerPosition.x - 28, playerPosition.y - 48, 56, 96, 14); ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.beginPath(); ctx.roundRect(playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); ctx.fill();
+      drawRoundRect(ctx, playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); ctx.fill();
       ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.5;
       ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 15);
       ctx.globalAlpha = 1;
@@ -597,7 +615,14 @@ const GameCanvas: React.FC<{
     }
     
     ctx.restore();
-  }, [playerPosition, entities, roadOffset, isInvincible, isRecovering, isPaused, particles, level]);
+    
+    requestAnimationFrame(draw);
+  }, [isInvincible, isRecovering, isPaused, level, theme]);
+
+  useEffect(() => {
+    const req = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(req);
+  }, [draw]);
 
   function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, spikes: number, outerRadius: number, innerRadius: number) {
     let rot = Math.PI / 2 * 3; let x = cx; let y = cy; let step = Math.PI / spikes;
