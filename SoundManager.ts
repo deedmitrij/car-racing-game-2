@@ -6,7 +6,6 @@ class SoundManager {
   private bgmInterval: any = null;
 
   async init() {
-    // If context already exists, just ensure it's running
     if (this.ctx) {
       if (this.ctx.state === 'suspended') {
         await this.ctx.resume();
@@ -14,7 +13,6 @@ class SoundManager {
       return;
     }
 
-    // Create new context
     const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
     
@@ -55,7 +53,8 @@ class SoundManager {
     if (!context || !this.engineOsc || !this.engineGain) return;
     
     const targetFreq = 40 + (speed * 15);
-    const targetGain = active ? 0.05 : 0;
+    // Increased engine gain from 0.05 to 0.12
+    const targetGain = active ? 0.12 : 0;
     
     this.engineOsc.frequency.setTargetAtTime(targetFreq, context.currentTime, 0.1);
     this.engineGain.gain.setTargetAtTime(targetGain, context.currentTime, 0.2);
@@ -72,7 +71,8 @@ class SoundManager {
     osc.frequency.setValueAtTime(440, context.currentTime);
     osc.frequency.exponentialRampToValueAtTime(1200, context.currentTime + 0.2);
     
-    gain.gain.setValueAtTime(0.2, context.currentTime);
+    // Increased gain from 0.2 to 0.45
+    gain.gain.setValueAtTime(0.45, context.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
     
     osc.connect(gain);
@@ -100,7 +100,8 @@ class SoundManager {
     filter.frequency.setValueAtTime(400, context.currentTime);
 
     const gain = context.createGain();
-    gain.gain.setValueAtTime(0.3, context.currentTime);
+    // Increased gain from 0.3 to 0.6
+    gain.gain.setValueAtTime(0.6, context.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.3);
 
     noise.connect(filter);
@@ -130,7 +131,8 @@ class SoundManager {
       const gain = context.createGain();
       osc.type = type;
       osc.frequency.setValueAtTime(f, context.currentTime + i * duration);
-      gain.gain.setValueAtTime(0.1, context.currentTime + i * duration);
+      // Increased gain from 0.1 to 0.25
+      gain.gain.setValueAtTime(0.25, context.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + (i + 1) * duration);
       osc.connect(gain);
       gain.connect(context.destination);
@@ -150,7 +152,8 @@ class SoundManager {
       const g = this.ctx.createGain();
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(60 + (level * 10), this.ctx.currentTime);
-      g.gain.setValueAtTime(0.04, this.ctx.currentTime);
+      // Increased bgm loop gain from 0.04 to 0.08
+      g.gain.setValueAtTime(0.08, this.ctx.currentTime);
       g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.4);
       osc.connect(g);
       g.connect(this.ctx.destination);

@@ -68,10 +68,11 @@ const App: React.FC = () => {
     const handleResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
+      // Calculate fit while maintaining aspect ratio
       const scaleW = w / CANVAS_WIDTH;
       const scaleH = h / CANVAS_HEIGHT;
-      // Subtract a small buffer for browser UI bars
-      setScale(Math.min(scaleW, scaleH) * 0.98);
+      // Use the smaller scale factor but allow it to fill as much as possible
+      setScale(Math.min(scaleW, scaleH));
     };
 
     const checkTouch = () => {
@@ -330,7 +331,7 @@ const App: React.FC = () => {
   return (
     <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden font-['Orbitron'] touch-none select-none">
       <div 
-        className="relative bg-slate-900 shadow-2xl overflow-hidden origin-center transition-transform"
+        className="relative bg-slate-900 shadow-[0_0_100px_rgba(0,0,0,0.5)] overflow-hidden origin-center transition-transform"
         style={{ 
           width: CANVAS_WIDTH, height: CANVAS_HEIGHT,
           transform: `scale(${scale}) translate(${Math.random() * shake - shake/2}px, ${Math.random() * shake - shake/2}px)`
@@ -390,7 +391,7 @@ const App: React.FC = () => {
 
         {/* --- ERGONOMIC MOBILE CONTROLS (SPLIT LAYOUT) --- */}
         {gameState.status === GameStatus.PLAYING && isTouchDevice && (
-          <div className="absolute bottom-0 left-0 right-0 h-48 flex justify-between items-end px-4 pb-8 pointer-events-none">
+          <div className="absolute bottom-0 left-0 right-0 h-48 flex justify-between items-end px-6 pb-8 pointer-events-none">
             {/* Left Side: Steering (Left/Right) */}
             <div className="flex gap-4 pointer-events-auto">
               <ControlBtn icon="L" onStart={() => handleInputStart('ArrowLeft')} onEnd={() => handleInputEnd('ArrowLeft')} />
@@ -399,8 +400,8 @@ const App: React.FC = () => {
 
             {/* Right Side: Speed (Up/Down) */}
             <div className="flex gap-4 pointer-events-auto">
-              <ControlBtn icon="U" onStart={() => handleInputStart('ArrowUp')} onEnd={() => handleInputStart('ArrowUp')} />
-              <ControlBtn icon="D" onStart={() => handleInputStart('ArrowDown')} onEnd={() => handleInputStart('ArrowDown')} />
+              <ControlBtn icon="U" onStart={() => handleInputStart('ArrowUp')} onEnd={() => handleInputEnd('ArrowUp')} />
+              <ControlBtn icon="D" onStart={() => handleInputStart('ArrowDown')} onEnd={() => handleInputEnd('ArrowDown')} />
             </div>
           </div>
         )}
@@ -419,15 +420,26 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
       default: return "";
     }
   };
+  
   return (
     <div 
-      className="w-20 h-20 bg-slate-900/60 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-500/40 active:scale-90 transition-all shadow-lg touch-none"
-      onPointerDown={(e) => { e.preventDefault(); onStart(); }}
-      onPointerUp={(e) => { e.preventDefault(); onEnd(); }}
-      onPointerLeave={(e) => { e.preventDefault(); onEnd(); }}
-      onPointerCancel={(e) => { e.preventDefault(); onEnd(); }}
+      className="w-20 h-20 bg-slate-900/70 border-2 border-blue-500/40 rounded-2xl flex items-center justify-center active:bg-blue-500/60 active:scale-95 transition-all shadow-xl touch-none"
+      style={{ touchAction: 'none' }}
+      onPointerDown={(e) => { 
+        e.preventDefault(); 
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        onStart(); 
+      }}
+      onPointerUp={(e) => { 
+        e.preventDefault(); 
+        onEnd(); 
+      }}
+      onPointerCancel={(e) => { 
+        e.preventDefault(); 
+        onEnd(); 
+      }}
     >
-      <svg className="w-10 h-10 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+      <svg className="w-12 h-12 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
         <path strokeLinecap="round" strokeLinejoin="round" d={getPath()} />
       </svg>
     </div>
@@ -462,19 +474,23 @@ const GameCanvas: React.FC<{
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke();
     }
 
-    // Road (Perfectly Centered)
+    // Road (Mathematically Centered)
     const roadX = (CANVAS_WIDTH - ROAD_WIDTH) / 2;
     ctx.fillStyle = theme.road;
     ctx.fillRect(roadX, 0, ROAD_WIDTH, CANVAS_HEIGHT);
     
-    // Lines
+    // Road Lines
     ctx.strokeStyle = theme.border;
     ctx.lineWidth = 4;
     ctx.setLineDash([40, 40]);
     ctx.lineDashOffset = -roadOffset * 2;
-    LANES.slice(0, -1).forEach(lx => {
-       ctx.beginPath(); ctx.moveTo(lx + 50, 0); ctx.lineTo(lx + 50, CANVAS_HEIGHT); ctx.stroke();
-    });
+    
+    // Draw lane lines relative to roadX
+    for (let i = 1; i < 4; i++) {
+       const lx = roadX + (i * (ROAD_WIDTH / 4));
+       ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
+    }
+
     ctx.setLineDash([]);
     ctx.strokeStyle = theme.border;
     ctx.lineWidth = 6;
@@ -556,7 +572,7 @@ const GameCanvas: React.FC<{
     ctx.lineTo(cx, cy - outerRadius); ctx.closePath(); ctx.fill();
   }
 
-  return <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />;
+  return <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="block shadow-2xl" />;
 };
 
 export default App;
