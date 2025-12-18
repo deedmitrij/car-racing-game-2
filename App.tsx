@@ -54,7 +54,8 @@ const App: React.FC = () => {
   const [scale, setScale] = useState(1);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   
-  // Buffers for frame-rate independent calculation
+  // High-frequency guards and buffers
+  const isHarmableRef = useRef(true);
   const scoreBuffer = useRef(0);
   const particlesRef = useRef<Particle[]>([]);
   const requestRef = useRef<number | undefined>(undefined);
@@ -102,18 +103,32 @@ const App: React.FC = () => {
 
   const startLevel = async (level: number) => {
     clearInputs();
-    scoreBuffer.current = gameState.score;
+    isHarmableRef.current = true;
+    
+    // Explicitly reset or carry over score/lives based on level
+    const isFirstLevel = level === 1;
+    if (isFirstLevel) {
+      scoreBuffer.current = 0;
+    } else {
+      scoreBuffer.current = gameState.score;
+    }
+
     await soundManager.init();
     soundManager.startBGM(level);
+
     setGameState(prev => ({
       ...prev,
       status: GameStatus.PLAYING,
       level,
+      lives: isFirstLevel ? INITIAL_LIVES : prev.lives,
+      score: scoreBuffer.current,
       timeLeft: LEVEL_DURATION,
       isInvincible: false,
       invincibilityTime: 0,
       recoveryInvincibilityTime: 0,
+      recoveryTime: 0,
     }));
+
     setEntities([]);
     setPlayerPosition({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 });
   };
@@ -121,6 +136,7 @@ const App: React.FC = () => {
   const restartGame = () => {
     clearInputs();
     scoreBuffer.current = 0;
+    isHarmableRef.current = true;
     soundManager.stopBGM();
     setGameState(prev => ({
       ...prev,
@@ -141,6 +157,9 @@ const App: React.FC = () => {
   const update = useCallback((time: number) => {
     if (lastTimeRef.current !== undefined) {
       const deltaTime = (time - lastTimeRef.current) / 1000;
+
+      // Update synchronous guard based on state
+      isHarmableRef.current = !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
 
       // 1. Particle and Screen Shake Updates
       particlesRef.current.forEach(p => {
@@ -231,24 +250,26 @@ const App: React.FC = () => {
           return filtered;
         });
 
-        // Collision Check (Calculated with current set of entities)
-        const isHarmable = !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
-        
-        for (const entity of entities) {
-          const dx = Math.abs(playerPosition.x - entity.position.x);
-          const dy = Math.abs(playerPosition.y - entity.position.y);
-          if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
-            if (entity.type === EntityType.BONUS) {
-              pickedUpBonus = true;
-              soundManager.playStar();
-              createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
-              setEntities(prev => prev.filter(e => e.id !== entity.id));
-            } else if (isHarmable) {
-              crashed = true;
-              soundManager.playCrash();
-              setShake(25);
-              createParticles(playerPosition.x, playerPosition.y, '#ff3333', 35);
-              break; 
+        // Collision Check - Uses synchronous isHarmableRef to prevent multi-subtraction
+        if (isHarmableRef.current) {
+          for (const entity of entities) {
+            const dx = Math.abs(playerPosition.x - entity.position.x);
+            const dy = Math.abs(playerPosition.y - entity.position.y);
+            if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
+              if (entity.type === EntityType.BONUS) {
+                pickedUpBonus = true;
+                soundManager.playStar();
+                createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
+                setEntities(prev => prev.filter(e => e.id !== entity.id));
+              } else {
+                // Crash detected! Immediately set ref to false to block further hits until state updates
+                isHarmableRef.current = false;
+                crashed = true;
+                soundManager.playCrash();
+                setShake(25);
+                createParticles(playerPosition.x, playerPosition.y, '#ff3333', 35);
+                break; 
+              }
             }
           }
         }
@@ -281,7 +302,7 @@ const App: React.FC = () => {
             };
           }
 
-          // Accumulate scores accurately
+          // Accumulate scores accurately (capped at total points to avoid overflow display bugs)
           const timeScore = config.speed * 50 * deltaTime;
           const bonusScore = pickedUpBonus ? 1000 : 0;
           scoreBuffer.current = prev.score + timeScore + pointsFromPassing + bonusScore;
@@ -430,7 +451,7 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
   
   return (
     <div 
-      className="w-24 h-24 bg-slate-900/90 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-600/70 active:scale-90 transition-all shadow-[0_0_20px_rgba(59,130,246,0.4)] touch-none pointer-events-auto"
+      className="w-24 h-24 bg-slate-900/90 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-600/70 active:scale-90 transition-all shadow-[0_0_20px_rgba(37,99,235,0.4)] touch-none pointer-events-auto"
       onPointerDown={(e) => { 
         e.preventDefault(); 
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
