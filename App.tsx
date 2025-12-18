@@ -68,10 +68,9 @@ const App: React.FC = () => {
     const handleResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      // Calculate fit while maintaining aspect ratio
+      // Force scaling to fit the whole game field without clipping
       const scaleW = w / CANVAS_WIDTH;
       const scaleH = h / CANVAS_HEIGHT;
-      // Use the smaller scale factor but allow it to fill as much as possible
       setScale(Math.min(scaleW, scaleH));
     };
 
@@ -148,8 +147,6 @@ const App: React.FC = () => {
 
       if (gameState.status === GameStatus.PLAYING) {
         const config = LEVEL_CONFIGS[gameState.level - 1];
-        const theme = LEVEL_THEMES[gameState.level - 1];
-
         soundManager.setEngineSpeed(config.speed, true);
 
         setGameState(prev => {
@@ -224,6 +221,7 @@ const App: React.FC = () => {
             const isLaneOccupied = filtered.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 200);
             
             if (!isLaneOccupied) {
+              const theme = LEVEL_THEMES[gameState.level - 1];
               const rand = Math.random();
               if (rand < config.trafficDensity) {
                 filtered.push({
@@ -331,10 +329,12 @@ const App: React.FC = () => {
   return (
     <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden font-['Orbitron'] touch-none select-none">
       <div 
-        className="relative bg-slate-900 shadow-[0_0_100px_rgba(0,0,0,0.5)] overflow-hidden origin-center transition-transform"
+        className="relative bg-slate-900 overflow-hidden origin-center"
         style={{ 
-          width: CANVAS_WIDTH, height: CANVAS_HEIGHT,
-          transform: `scale(${scale}) translate(${Math.random() * shake - shake/2}px, ${Math.random() * shake - shake/2}px)`
+          width: CANVAS_WIDTH, 
+          height: CANVAS_HEIGHT,
+          transform: `scale(${scale}) translate(${Math.random() * shake - shake/2}px, ${Math.random() * shake - shake/2}px)`,
+          touchAction: 'none'
         }}
       >
         <GameCanvas 
@@ -389,16 +389,13 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* --- ERGONOMIC MOBILE CONTROLS (SPLIT LAYOUT) --- */}
+        {/* --- MOBILE CONTROLS --- */}
         {gameState.status === GameStatus.PLAYING && isTouchDevice && (
           <div className="absolute bottom-0 left-0 right-0 h-48 flex justify-between items-end px-6 pb-8 pointer-events-none">
-            {/* Left Side: Steering (Left/Right) */}
             <div className="flex gap-4 pointer-events-auto">
               <ControlBtn icon="L" onStart={() => handleInputStart('ArrowLeft')} onEnd={() => handleInputEnd('ArrowLeft')} />
               <ControlBtn icon="R" onStart={() => handleInputStart('ArrowRight')} onEnd={() => handleInputEnd('ArrowRight')} />
             </div>
-
-            {/* Right Side: Speed (Up/Down) */}
             <div className="flex gap-4 pointer-events-auto">
               <ControlBtn icon="U" onStart={() => handleInputStart('ArrowUp')} onEnd={() => handleInputEnd('ArrowUp')} />
               <ControlBtn icon="D" onStart={() => handleInputStart('ArrowDown')} onEnd={() => handleInputEnd('ArrowDown')} />
@@ -423,21 +420,14 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
   
   return (
     <div 
-      className="w-20 h-20 bg-slate-900/70 border-2 border-blue-500/40 rounded-2xl flex items-center justify-center active:bg-blue-500/60 active:scale-95 transition-all shadow-xl touch-none"
-      style={{ touchAction: 'none' }}
+      className="w-20 h-20 bg-slate-900/80 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-500/60 active:scale-90 transition-all shadow-xl touch-none"
       onPointerDown={(e) => { 
         e.preventDefault(); 
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
         onStart(); 
       }}
-      onPointerUp={(e) => { 
-        e.preventDefault(); 
-        onEnd(); 
-      }}
-      onPointerCancel={(e) => { 
-        e.preventDefault(); 
-        onEnd(); 
-      }}
+      onPointerUp={(e) => { e.preventDefault(); onEnd(); }}
+      onPointerCancel={(e) => { e.preventDefault(); onEnd(); }}
     >
       <svg className="w-12 h-12 text-blue-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
         <path strokeLinecap="round" strokeLinejoin="round" d={getPath()} />
@@ -460,11 +450,11 @@ const GameCanvas: React.FC<{
     
     frameRef.current++;
 
-    ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    
-    // Background Grid
+    // Clear Screen
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Background Grid
     ctx.strokeStyle = theme.grid;
     ctx.lineWidth = 1;
     for (let x = 0; x <= CANVAS_WIDTH; x += 50) {
@@ -474,18 +464,17 @@ const GameCanvas: React.FC<{
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke();
     }
 
-    // Road (Mathematically Centered)
+    // Road (Perfectly Mathematically Centered)
     const roadX = (CANVAS_WIDTH - ROAD_WIDTH) / 2;
     ctx.fillStyle = theme.road;
     ctx.fillRect(roadX, 0, ROAD_WIDTH, CANVAS_HEIGHT);
     
-    // Road Lines
+    // Road Markings
     ctx.strokeStyle = theme.border;
     ctx.lineWidth = 4;
     ctx.setLineDash([40, 40]);
     ctx.lineDashOffset = -roadOffset * 2;
     
-    // Draw lane lines relative to roadX
     for (let i = 1; i < 4; i++) {
        const lx = roadX + (i * (ROAD_WIDTH / 4));
        ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
@@ -504,62 +493,74 @@ const GameCanvas: React.FC<{
     });
     ctx.globalAlpha = 1;
 
-    // Entities
+    // Entities (Simplified for Performance)
     entities.forEach(ent => {
-      ctx.shadowBlur = 15; ctx.shadowColor = ent.color; ctx.fillStyle = ent.color;
+      ctx.fillStyle = ent.color;
       if (ent.type === EntityType.NPC_CAR) {
-        ctx.beginPath(); ctx.roundRect(ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 8); ctx.fill();
-        ctx.fillStyle = '#00000055';
+        // Body
+        ctx.beginPath(); 
+        ctx.rect(ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height); 
+        ctx.fill();
+        // Windows
+        ctx.fillStyle = '#00000044';
         ctx.fillRect(ent.position.x - 18, ent.position.y - 25, 36, 12);
         ctx.fillRect(ent.position.x - 18, ent.position.y + 10, 36, 8);
       } else if (ent.type === EntityType.OBSTACLE) {
-        ctx.beginPath(); ctx.rect(ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height); ctx.fill();
-        ctx.strokeStyle = '#facc15'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(ent.position.x - 20, ent.position.y - 20); ctx.lineTo(ent.position.x + 20, ent.position.y + 20); ctx.stroke();
+        ctx.beginPath(); 
+        ctx.rect(ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height); 
+        ctx.fill();
+        ctx.strokeStyle = '#00000033'; ctx.lineWidth = 4;
+        ctx.strokeRect(ent.position.x - ent.width/2 + 5, ent.position.y - ent.height/2 + 5, ent.width - 10, ent.height - 10);
       } else {
+        // Bonus Star
         const s = 1 + Math.sin(frameRef.current * 0.15) * 0.2;
-        ctx.save(); ctx.translate(ent.position.x, ent.position.y); ctx.scale(s, s); ctx.rotate(frameRef.current * 0.05);
-        drawStar(ctx, 0, 0, 5, 18, 8); ctx.restore();
+        ctx.save(); 
+        ctx.translate(ent.position.x, ent.position.y); 
+        ctx.scale(s, s); 
+        ctx.rotate(frameRef.current * 0.05);
+        ctx.fillStyle = COLORS.INVINCIBLE;
+        drawStar(ctx, 0, 0, 5, 18, 8); 
+        ctx.restore();
       }
-      ctx.shadowBlur = 0;
     });
 
     // Player Rendering
     ctx.save();
     
     if (isRecovering) {
-      const alphaPulse = 0.3 + (Math.sin(frameRef.current * 0.4) + 1) * 0.3;
-      ctx.globalAlpha = alphaPulse;
+      ctx.globalAlpha = 0.4 + (Math.sin(frameRef.current * 0.4) + 1) * 0.3;
     }
 
     if (isInvincible) {
-      ctx.save();
-      ctx.globalAlpha = 0.3;
-      ctx.fillStyle = COLORS.INVINCIBLE;
-      ctx.shadowBlur = 20;
-      ctx.shadowColor = COLORS.INVINCIBLE;
+      ctx.fillStyle = '#ffffff22';
       ctx.beginPath();
       ctx.arc(playerPosition.x, playerPosition.y, 60, 0, Math.PI * 2);
       ctx.fill();
-      ctx.restore();
+      ctx.strokeStyle = COLORS.INVINCIBLE;
+      ctx.lineWidth = 4;
+      ctx.stroke();
     }
     
-    ctx.shadowBlur = 25; 
-    ctx.shadowColor = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
+    // Player Body
     ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
     ctx.beginPath(); 
-    ctx.roundRect(playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); 
+    ctx.rect(playerPosition.x - 22, playerPosition.y - 42, 44, 84); 
     ctx.fill();
+    // Brighter border instead of shadowBlur
+    ctx.strokeStyle = '#ffffffaa';
+    ctx.lineWidth = 2;
+    ctx.stroke();
     
-    ctx.fillStyle = '#ffffff33'; 
+    // Cockpit
+    ctx.fillStyle = '#ffffff44'; 
     ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 20);
     
-    ctx.fillStyle = '#ff4444'; 
+    // Brake lights
+    ctx.fillStyle = '#ff0000'; 
     ctx.fillRect(playerPosition.x - 18, playerPosition.y + 30, 8, 4); 
     ctx.fillRect(playerPosition.x + 10, playerPosition.y + 30, 8, 4);
     
     ctx.restore();
-    ctx.shadowBlur = 0;
   }, [playerPosition, entities, roadOffset, isInvincible, isRecovering, isPaused, particles, level]);
 
   function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, spikes: number, outerRadius: number, innerRadius: number) {
@@ -572,7 +573,7 @@ const GameCanvas: React.FC<{
     ctx.lineTo(cx, cy - outerRadius); ctx.closePath(); ctx.fill();
   }
 
-  return <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="block shadow-2xl" />;
+  return <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="block" />;
 };
 
 export default App;
