@@ -20,6 +20,7 @@ import {
   LANES,
   COLORS
 } from './constants';
+import { soundManager } from './SoundManager';
 import HUD from './components/HUD';
 import Menu from './components/Menu';
 
@@ -90,6 +91,8 @@ const App: React.FC = () => {
   };
 
   const startLevel = (level: number) => {
+    soundManager.init(); // Initialize audio context on user interaction
+    soundManager.startBGM(level);
     setGameState(prev => ({
       ...prev,
       status: GameStatus.PLAYING,
@@ -104,6 +107,7 @@ const App: React.FC = () => {
   };
 
   const restartGame = () => {
+    soundManager.stopBGM();
     setGameState(prev => ({
       ...prev,
       status: GameStatus.START,
@@ -134,10 +138,20 @@ const App: React.FC = () => {
         const config = LEVEL_CONFIGS[gameState.level - 1];
         const theme = LEVEL_THEMES[gameState.level - 1];
 
+        // Engine sound modulation
+        soundManager.setEngineSpeed(config.speed, true);
+
         setGameState(prev => {
           const nextTime = prev.timeLeft - deltaTime;
           if (nextTime <= 0) {
-            return { ...prev, status: prev.level === MAX_LEVELS ? GameStatus.WIN : GameStatus.LEVEL_CLEAR, timeLeft: 0 };
+            soundManager.stopBGM();
+            if (prev.level === MAX_LEVELS) {
+              soundManager.playWin();
+              return { ...prev, status: GameStatus.WIN, timeLeft: 0 };
+            } else {
+              soundManager.playLevelClear();
+              return { ...prev, status: GameStatus.LEVEL_CLEAR, timeLeft: 0 };
+            }
           }
           
           let nextInvTime = prev.invincibilityTime - deltaTime;
@@ -234,6 +248,7 @@ const App: React.FC = () => {
           const dy = Math.abs(playerPosition.y - entity.position.y);
           if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
             if (entity.type === EntityType.BONUS) {
+              soundManager.playStar();
               createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
               setGameState(prev => ({ 
                 ...prev, 
@@ -243,13 +258,19 @@ const App: React.FC = () => {
               }));
               setEntities(prev => prev.filter(e => e.id !== entity.id));
             } else if (isHarmable) {
+              soundManager.playCrash();
               setShake(20);
               createParticles(playerPosition.x, playerPosition.y, '#ff4444', 30);
               setGameState(prev => {
                 const newLives = prev.lives - 1;
+                const isGameOver = newLives <= 0;
+                if (isGameOver) {
+                  soundManager.stopBGM();
+                  soundManager.playGameOver();
+                }
                 return { 
                   ...prev, 
-                  status: newLives <= 0 ? GameStatus.GAME_OVER : GameStatus.COLLISION_PAUSE, 
+                  status: isGameOver ? GameStatus.GAME_OVER : GameStatus.COLLISION_PAUSE, 
                   lives: Math.max(0, newLives),
                   score: Math.max(0, prev.score - 500),
                   recoveryTime: RECOVERY_PAUSE_DURATION,
@@ -260,6 +281,7 @@ const App: React.FC = () => {
           }
         });
       } else if (gameState.status === GameStatus.COLLISION_PAUSE) {
+        soundManager.setEngineSpeed(0, false);
         setGameState(prev => {
           const nextRec = prev.recoveryTime - deltaTime;
           return { 
@@ -268,6 +290,8 @@ const App: React.FC = () => {
             status: nextRec <= 0 ? GameStatus.PLAYING : prev.status 
           };
         });
+      } else {
+        soundManager.setEngineSpeed(0, false);
       }
     }
     lastTimeRef.current = time;
@@ -288,17 +312,11 @@ const App: React.FC = () => {
     };
   }, [update]);
 
-  // Pointer handlers for virtual controls (works for both touch and mouse)
-  const handleInputStart = (key: string) => {
-    keysPressed.current[key] = true;
-  };
-  const handleInputEnd = (key: string) => {
-    keysPressed.current[key] = false;
-  };
+  const handleInputStart = (key: string) => { handleInputStart; keysPressed.current[key] = true; };
+  const handleInputEnd = (key: string) => { keysPressed.current[key] = false; };
 
   return (
     <div className="relative w-full h-screen bg-black flex items-center justify-center overflow-hidden font-['Orbitron'] touch-none select-none">
-      {/* Scaling Container */}
       <div 
         className="relative bg-slate-900 shadow-[0_0_50px_rgba(0,0,0,0.8)] border-4 border-slate-800 rounded-2xl overflow-hidden origin-center"
         style={{ 
@@ -359,10 +377,8 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* --- MOBILE CONTROLS (Only visible on touch devices) --- */}
         {gameState.status === GameStatus.PLAYING && isTouchDevice && (
           <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-2 pointer-events-none opacity-80">
-            {/* UP BUTTON */}
             <div 
               className="w-16 h-16 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
               onPointerDown={() => handleInputStart('ArrowUp')}
@@ -375,7 +391,6 @@ const App: React.FC = () => {
             </div>
             
             <div className="flex gap-12">
-              {/* LEFT BUTTON */}
               <div 
                 className="w-20 h-20 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
                 onPointerDown={() => handleInputStart('ArrowLeft')}
@@ -387,7 +402,6 @@ const App: React.FC = () => {
                 </svg>
               </div>
 
-              {/* RIGHT BUTTON */}
               <div 
                 className="w-20 h-20 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
                 onPointerDown={() => handleInputStart('ArrowRight')}
@@ -400,7 +414,6 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* DOWN BUTTON */}
             <div 
               className="w-16 h-16 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
               onPointerDown={() => handleInputStart('ArrowDown')}
