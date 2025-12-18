@@ -60,18 +60,18 @@ const App: React.FC = () => {
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const lastSpawnTime = useRef<number>(0);
 
-  // Clear all pressed keys to prevent "stuck" movement
   const clearInputs = useCallback(() => {
     keysPressed.current = {};
   }, []);
 
-  // Handle Responsive Scaling and Mobile Detection
   useEffect(() => {
     const handleResize = () => {
-      const widthScale = window.innerWidth / CANVAS_WIDTH;
-      const heightScale = window.innerHeight / CANVAS_HEIGHT;
-      const newScale = Math.min(widthScale, heightScale, 1.1);
-      setScale(newScale);
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const scaleW = w / CANVAS_WIDTH;
+      const scaleH = h / CANVAS_HEIGHT;
+      // Fit to screen while maintaining aspect ratio
+      setScale(Math.min(scaleW, scaleH));
     };
 
     const checkTouch = () => {
@@ -81,7 +81,7 @@ const App: React.FC = () => {
     handleResize();
     checkTouch();
     window.addEventListener('resize', handleResize);
-    window.addEventListener('blur', clearInputs); // Clear inputs if window loses focus
+    window.addEventListener('blur', clearInputs);
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('blur', clearInputs);
@@ -99,9 +99,9 @@ const App: React.FC = () => {
     }
   };
 
-  const startLevel = (level: number) => {
-    clearInputs(); // Ensure no leftover keys from menu interaction
-    soundManager.init();
+  const startLevel = async (level: number) => {
+    clearInputs();
+    await soundManager.init(); // Explicitly init and resume audio context
     soundManager.startBGM(level);
     setGameState(prev => ({
       ...prev,
@@ -328,13 +328,12 @@ const App: React.FC = () => {
   const handleInputEnd = (key: string) => { keysPressed.current[key] = false; };
 
   return (
-    <div className="relative w-full h-screen bg-black flex items-center justify-center overflow-hidden font-['Orbitron'] touch-none select-none">
+    <div className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden font-['Orbitron'] touch-none select-none">
       <div 
-        className="relative bg-slate-900 shadow-[0_0_50px_rgba(0,0,0,0.8)] border-4 border-slate-800 rounded-2xl overflow-hidden origin-center"
+        className="relative bg-slate-900 shadow-2xl overflow-hidden origin-center transition-transform"
         style={{ 
           width: CANVAS_WIDTH, height: CANVAS_HEIGHT,
-          transform: `scale(${scale}) translate(${Math.random() * shake - shake/2}px, ${Math.random() * shake - shake/2}px)`,
-          transition: 'transform 0.1s ease-out'
+          transform: `scale(${scale}) translate(${Math.random() * shake - shake/2}px, ${Math.random() * shake - shake/2}px)`
         }}
       >
         <GameCanvas 
@@ -389,56 +388,47 @@ const App: React.FC = () => {
           </div>
         )}
 
+        {/* --- IMPROVED MOBILE CONTROLS --- */}
         {gameState.status === GameStatus.PLAYING && isTouchDevice && (
-          <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-2 pointer-events-none opacity-80">
-            <div 
-              className="w-16 h-16 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
-              onPointerDown={() => handleInputStart('ArrowUp')}
-              onPointerUp={() => handleInputEnd('ArrowUp')}
-              onPointerLeave={() => handleInputEnd('ArrowUp')}
-            >
-              <svg className="w-8 h-8 text-white pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 15l7-7 7 7" />
-              </svg>
-            </div>
-            
-            <div className="flex gap-12">
-              <div 
-                className="w-20 h-20 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
-                onPointerDown={() => handleInputStart('ArrowLeft')}
-                onPointerUp={() => handleInputEnd('ArrowLeft')}
-                onPointerLeave={() => handleInputEnd('ArrowLeft')}
-              >
-                <svg className="w-10 h-10 text-white pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M15 19l-7-7 7-7" />
-                </svg>
-              </div>
-
-              <div 
-                className="w-20 h-20 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
-                onPointerDown={() => handleInputStart('ArrowRight')}
-                onPointerUp={() => handleInputEnd('ArrowRight')}
-                onPointerLeave={() => handleInputEnd('ArrowRight')}
-              >
-                <svg className="w-10 h-10 text-white pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M9 5l7 7-7 7" />
-                </svg>
-              </div>
+          <div className="absolute bottom-0 left-0 right-0 h-64 flex justify-between items-end px-6 pb-12 pointer-events-none">
+            {/* LEFT SIDE: Steering */}
+            <div className="flex gap-4 pointer-events-auto">
+              <ControlBtn icon="L" onStart={() => handleInputStart('ArrowLeft')} onEnd={() => handleInputEnd('ArrowLeft')} />
+              <ControlBtn icon="R" onStart={() => handleInputStart('ArrowRight')} onEnd={() => handleInputEnd('ArrowRight')} />
             </div>
 
-            <div 
-              className="w-16 h-16 bg-slate-800/90 border-2 border-blue-500 rounded-full flex items-center justify-center pointer-events-auto active:bg-blue-400 active:scale-90 transition-all shadow-[0_0_15px_rgba(59,130,246,0.5)] touch-none"
-              onPointerDown={() => handleInputStart('ArrowDown')}
-              onPointerUp={() => handleInputEnd('ArrowDown')}
-              onPointerLeave={() => handleInputEnd('ArrowDown')}
-            >
-              <svg className="w-8 h-8 text-white pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M19 9l-7 7-7-7" />
-              </svg>
+            {/* RIGHT SIDE: Gas/Brake */}
+            <div className="flex gap-4 pointer-events-auto">
+              <ControlBtn icon="U" onStart={() => handleInputStart('ArrowUp')} onEnd={() => handleInputEnd('ArrowUp')} />
+              <ControlBtn icon="D" onStart={() => handleInputStart('ArrowDown')} onEnd={() => handleInputEnd('ArrowDown')} />
             </div>
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => void }> = ({ icon, onStart, onEnd }) => {
+  const getPath = () => {
+    switch(icon) {
+      case 'L': return "M15 19l-7-7 7-7";
+      case 'R': return "M9 5l7 7-7 7";
+      case 'U': return "M5 15l7-7 7 7";
+      case 'D': return "M19 9l-7 7-7-7";
+    }
+  };
+  return (
+    <div 
+      className="w-24 h-24 bg-slate-900/60 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-500/40 active:scale-95 transition-all shadow-lg touch-none"
+      onPointerDown={onStart}
+      onPointerUp={onEnd}
+      onPointerLeave={onEnd}
+      onPointerCancel={onEnd}
+    >
+      <svg className="w-12 h-12 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+        <path strokeLinecap="round" strokeLinejoin="round" d={getPath()} />
+      </svg>
     </div>
   );
 };
@@ -459,7 +449,7 @@ const GameCanvas: React.FC<{
 
     ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
-    // Grid
+    // Background Grid
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     ctx.strokeStyle = theme.grid;
@@ -471,7 +461,7 @@ const GameCanvas: React.FC<{
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke();
     }
 
-    // Road
+    // Road (Perfectly Centered)
     const roadX = (CANVAS_WIDTH - ROAD_WIDTH) / 2;
     ctx.fillStyle = theme.road;
     ctx.fillRect(roadX, 0, ROAD_WIDTH, CANVAS_HEIGHT);

@@ -3,14 +3,21 @@ class SoundManager {
   private ctx: AudioContext | null = null;
   private engineOsc: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
-  private bgmOsc: OscillatorNode | null = null;
-  private bgmGain: GainNode | null = null;
-  private isMuted: boolean = false;
+  private bgmInterval: any = null;
 
-  init() {
-    if (this.ctx) return;
-    this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  async init() {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') {
+        await this.ctx.resume();
+      }
+      return;
+    }
+    const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    this.ctx = new AudioCtx();
     this.setupEngine();
+    if (this.ctx.state === 'suspended') {
+      await this.ctx.resume();
+    }
   }
 
   private setupEngine() {
@@ -62,8 +69,7 @@ class SoundManager {
 
   playCrash() {
     if (!this.ctx) return;
-    // White noise for "crunch"
-    const bufferSize = this.ctx.sampleRate * 0.5;
+    const bufferSize = this.ctx.sampleRate * 0.3;
     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
@@ -75,12 +81,11 @@ class SoundManager {
     
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(600, this.ctx.currentTime);
-    filter.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.4);
+    filter.frequency.setValueAtTime(400, this.ctx.currentTime);
 
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.5);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
 
     noise.connect(filter);
     filter.connect(gain);
@@ -120,29 +125,27 @@ class SoundManager {
     if (!this.ctx) return;
     this.stopBGM();
     
-    // Simple procedural rhythmic "thumping" bass
     const loop = () => {
-      if (!this.bgmGain) return;
-      const osc = this.ctx!.createOscillator();
-      const g = this.ctx!.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(50 + (level * 5), this.ctx!.currentTime);
-      g.gain.setValueAtTime(0.03, this.ctx!.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, this.ctx!.currentTime + 0.2);
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(60 + (level * 10), this.ctx.currentTime);
+      g.gain.setValueAtTime(0.04, this.ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.4);
       osc.connect(g);
-      g.connect(this.ctx!.destination);
+      g.connect(this.ctx.destination);
       osc.start();
-      osc.stop(this.ctx!.currentTime + 0.2);
+      osc.stop(this.ctx.currentTime + 0.5);
     };
 
-    // Note: In a real app we'd use a better scheduler, but this fits the demo
-    const interval = setInterval(loop, 250);
-    (this as any).bgmInterval = interval;
+    this.bgmInterval = setInterval(loop, 400 - (level * 20));
   }
 
   stopBGM() {
-    if ((this as any).bgmInterval) {
-      clearInterval((this as any).bgmInterval);
+    if (this.bgmInterval) {
+      clearInterval(this.bgmInterval);
+      this.bgmInterval = null;
     }
   }
 }
