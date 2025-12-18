@@ -66,11 +66,11 @@ const App: React.FC = () => {
   const [scale, setScale] = useState(1);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   
-  // High-frequency refs to keep the loop stable and avoid React thrashing on Safari
+  // High-frequency refs to keep the loop stable and avoid React thrashing
   const playerPosRef = useRef({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 });
   const entitiesRef = useRef<Entity[]>([]);
   const roadOffsetRef = useRef(0);
-  const isHarmableRef = useRef(true);
+  const collisionLockRef = useRef(false); // Prevents multiple hits in rapid succession
   const scoreBuffer = useRef(0);
   const shakeRef = useRef(0);
   const particlesRef = useRef<Particle[]>([]);
@@ -81,7 +81,13 @@ const App: React.FC = () => {
   
   // Mirror state in a ref for access within the stable update loop
   const stateRef = useRef(gameState);
-  useEffect(() => { stateRef.current = gameState; }, [gameState]);
+  useEffect(() => { 
+    stateRef.current = gameState;
+    // Release collision lock when we are safely in recovery or invincibility
+    if (gameState.status === GameStatus.COLLISION_PAUSE || gameState.recoveryInvincibilityTime > 0 || gameState.isInvincible) {
+      collisionLockRef.current = false;
+    }
+  }, [gameState]);
 
   const clearInputs = useCallback(() => {
     keysPressed.current = {};
@@ -123,7 +129,7 @@ const App: React.FC = () => {
 
   const startLevel = async (level: number) => {
     clearInputs();
-    isHarmableRef.current = true;
+    collisionLockRef.current = false;
     shakeRef.current = 0;
     
     const isFirstLevel = level === 1;
@@ -156,12 +162,12 @@ const App: React.FC = () => {
   const restartGame = () => {
     clearInputs();
     scoreBuffer.current = 0;
-    isHarmableRef.current = true;
+    collisionLockRef.current = false;
     shakeRef.current = 0;
     soundManager.stopBGM();
-    setGameState(prev => ({
-      ...prev,
+    setGameState({
       status: GameStatus.START,
+      playerName: stateRef.current.playerName,
       level: 1,
       lives: INITIAL_LIVES,
       timeLeft: LEVEL_DURATION,
@@ -170,7 +176,7 @@ const App: React.FC = () => {
       invincibilityTime: 0,
       recoveryInvincibilityTime: 0,
       recoveryTime: 0,
-    }));
+    });
     entitiesRef.current = [];
     particlesRef.current = [];
   };
@@ -180,9 +186,6 @@ const App: React.FC = () => {
     
     if (lastTimeRef.current !== undefined) {
       const deltaTime = (time - lastTimeRef.current) / 1000;
-
-      // Update synchronous guard based on state
-      isHarmableRef.current = !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
 
       // 1. Particle and Screen Shake Updates
       particlesRef.current.forEach(p => {
@@ -218,7 +221,7 @@ const App: React.FC = () => {
 
         roadOffsetRef.current = (roadOffsetRef.current + config.speed) % 80;
 
-        // Entity Management & Passing Score
+        // Entity Management
         let pointsFromPassing = 0;
         let pickedUpBonus = false;
         let crashed = false;
@@ -271,30 +274,35 @@ const App: React.FC = () => {
         entitiesRef.current = filteredEntities;
 
         // Collision Check
-        if (isHarmableRef.current) {
-          for (const entity of entitiesRef.current) {
-            const dx = Math.abs(playerPosRef.current.x - entity.position.x);
-            const dy = Math.abs(playerPosRef.current.y - entity.position.y);
-            if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
-              if (entity.type === EntityType.BONUS) {
-                pickedUpBonus = true;
-                soundManager.playStar();
-                createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
-                entitiesRef.current = entitiesRef.current.filter(e => e.id !== entity.id);
-              } else {
-                isHarmableRef.current = false;
-                crashed = true;
-                soundManager.playCrash();
-                shakeRef.current = 25;
-                createParticles(playerPosRef.current.x, playerPosRef.current.y, '#ff3333', 35);
-                break; 
-              }
+        // Synchronous check using Ref guards
+        const isCurrentlyHarmable = !collisionLockRef.current && !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
+        
+        for (const entity of entitiesRef.current) {
+          const dx = Math.abs(playerPosRef.current.x - entity.position.x);
+          const dy = Math.abs(playerPosRef.current.y - entity.position.y);
+          if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
+            if (entity.type === EntityType.BONUS) {
+              pickedUpBonus = true;
+              soundManager.playStar();
+              createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
+              entitiesRef.current = entitiesRef.current.filter(e => e.id !== entity.id);
+            } else if (isCurrentlyHarmable) {
+              // Lock collision detection immediately
+              collisionLockRef.current = true;
+              crashed = true;
+              soundManager.playCrash();
+              shakeRef.current = 25;
+              createParticles(playerPosRef.current.x, playerPosRef.current.y, '#ff3333', 35);
+              break; 
             }
           }
         }
 
-        // Apply All Changes to Game State in one Batch
+        // Apply All Changes to Game State in one atomic functional update
         setGameState(prev => {
+          // If we already transitioned out of PLAYING in a previous frame's queued update, skip
+          if (prev.status !== GameStatus.PLAYING) return prev;
+
           let nextTimeLeft = prev.timeLeft - deltaTime;
           if (nextTimeLeft <= 0) {
             soundManager.stopBGM();
