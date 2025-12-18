@@ -32,7 +32,7 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
         <div className="bg-slate-900/95 backdrop-blur-xl border border-green-500/40 px-6 py-2 rounded-b-2xl shadow-2xl -mt-4 pt-6">
           <div className="text-[8px] text-green-400 font-black uppercase tracking-widest text-center mb-0.5">Score</div>
           <div className="text-2xl font-black text-white italic tabular-nums tracking-tighter drop-shadow-[0_0_10px_rgba(255,255,255,0.3)] text-center">
-            {score.toLocaleString()}
+            {Math.floor(score).toLocaleString()}
           </div>
         </div>
         
@@ -45,7 +45,7 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
         </div>
       </div>
 
-      {/* --- SIDE MARGIN HUD (Safe 80px Zone) --- */}
+      {/* --- SIDE MARGIN HUD --- */}
       
       {/* Right Side Margin: Lives */}
       <div className="absolute top-24 right-2 w-[76px] flex flex-col items-center gap-2">
@@ -65,16 +65,14 @@ const HUD: React.FC<HUDProps> = ({ gameState }) => {
           </div>
         </div>
 
-        {/* Shield Timer - Positioned specifically in the margin below lives */}
+        {/* Shield Timer */}
         {invincibilityTime > 0 && (
           <div className="w-full bg-amber-900/90 backdrop-blur-md border border-amber-500/50 p-2 rounded-xl shadow-2xl animate-in slide-in-from-right-4 duration-300 flex flex-col items-center">
             <div className="text-[7px] text-amber-400 font-black uppercase tracking-[0.1em] text-center mb-1 leading-tight">Shield</div>
             <div className="text-lg font-black text-white italic tabular-nums leading-none">
               {invincibilityTime.toFixed(1)}
             </div>
-            {/* Progress Bar Container */}
             <div className="w-full h-1.5 bg-slate-950 rounded-full mt-2 overflow-hidden border border-white/10">
-              {/* Actual Progress Bar - Removed transition to ensure frame-perfect sync with numeric timer */}
               <div 
                 className="h-full bg-amber-400 shadow-[0_0_5px_#fbbf24]" 
                 style={{ width: `${shieldPercent}%` }}

@@ -54,6 +54,8 @@ const App: React.FC = () => {
   const [scale, setScale] = useState(1);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   
+  // Buffers for frame-rate independent calculation
+  const scoreBuffer = useRef(0);
   const particlesRef = useRef<Particle[]>([]);
   const requestRef = useRef<number | undefined>(undefined);
   const lastTimeRef = useRef<number | undefined>(undefined);
@@ -70,7 +72,6 @@ const App: React.FC = () => {
       const h = window.innerHeight;
       const scaleW = w / CANVAS_WIDTH;
       const scaleH = h / CANVAS_HEIGHT;
-      // Fixed scaling logic to ensure the entire field is visible regardless of scale/DPI
       setScale(Math.min(scaleW, scaleH) * 0.96);
     };
 
@@ -101,6 +102,7 @@ const App: React.FC = () => {
 
   const startLevel = async (level: number) => {
     clearInputs();
+    scoreBuffer.current = gameState.score;
     await soundManager.init();
     soundManager.startBGM(level);
     setGameState(prev => ({
@@ -118,6 +120,7 @@ const App: React.FC = () => {
 
   const restartGame = () => {
     clearInputs();
+    scoreBuffer.current = 0;
     soundManager.stopBGM();
     setGameState(prev => ({
       ...prev,
@@ -139,45 +142,19 @@ const App: React.FC = () => {
     if (lastTimeRef.current !== undefined) {
       const deltaTime = (time - lastTimeRef.current) / 1000;
 
+      // 1. Particle and Screen Shake Updates
       particlesRef.current.forEach(p => {
         p.x += p.vx; p.y += p.vy; p.life -= deltaTime * 2;
       });
       particlesRef.current = particlesRef.current.filter(p => p.life > 0);
       if (shake > 0) setShake(prev => Math.max(0, prev - deltaTime * 40));
 
+      // 2. Main Game Logic
       if (gameState.status === GameStatus.PLAYING) {
         const config = LEVEL_CONFIGS[gameState.level - 1];
         soundManager.setEngineSpeed(config.speed, true);
 
-        setGameState(prev => {
-          const nextTime = prev.timeLeft - deltaTime;
-          if (nextTime <= 0) {
-            soundManager.stopBGM();
-            if (prev.level === MAX_LEVELS) {
-              soundManager.playWin();
-              return { ...prev, status: GameStatus.WIN, timeLeft: 0 };
-            } else {
-              soundManager.playLevelClear();
-              return { ...prev, status: GameStatus.LEVEL_CLEAR, timeLeft: 0 };
-            }
-          }
-          
-          let nextInvTime = prev.invincibilityTime - deltaTime;
-          let nextRecInvTime = prev.recoveryInvincibilityTime - deltaTime;
-          
-          // Normalized scoring: Float-based accumulation to prevent 0 points at high frame rates
-          const pointsToAdd = config.speed * 50 * deltaTime;
-
-          return { 
-            ...prev, 
-            timeLeft: nextTime, 
-            invincibilityTime: Math.max(0, nextInvTime),
-            isInvincible: nextInvTime > 0,
-            recoveryInvincibilityTime: Math.max(0, nextRecInvTime),
-            score: prev.score + pointsToAdd
-          };
-        });
-
+        // Movement Logic
         const moveSpeed = 8;
         setPlayerPosition(prev => {
           let nx = prev.x;
@@ -200,25 +177,26 @@ const App: React.FC = () => {
 
         setRoadOffset(prev => (prev + config.speed) % 80);
 
+        // Entity Management & Passing Score
+        let pointsFromPassing = 0;
+        let pickedUpBonus = false;
+        let crashed = false;
+
         setEntities(prev => {
-          let pointsGained = 0;
           const next = prev.map(e => ({ ...e, position: { ...e.position, y: e.position.y + config.speed } }));
-          
           const filtered = [];
+          
           for (const e of next) {
             if (e.position.y - e.height / 2 > CANVAS_HEIGHT) {
               if (e.type === EntityType.NPC_CAR || e.type === EntityType.OBSTACLE) {
-                pointsGained += 250; 
+                pointsFromPassing += 250; 
               }
             } else {
               filtered.push(e);
             }
           }
 
-          if (pointsGained > 0) {
-            setGameState(s => ({ ...s, score: s.score + pointsGained }));
-          }
-
+          // Spawn New Entities
           if (time - lastSpawnTime.current > 600) {
             const lane = LANES[Math.floor(Math.random() * LANES.length)];
             const isLaneOccupied = filtered.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 200);
@@ -253,55 +231,76 @@ const App: React.FC = () => {
           return filtered;
         });
 
+        // Collision Check (Calculated with current set of entities)
         const isHarmable = !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
-        let collisionTriggeredThisFrame = false;
         
-        entities.forEach(entity => {
-          if (collisionTriggeredThisFrame || !isHarmable) return; 
-
+        for (const entity of entities) {
           const dx = Math.abs(playerPosition.x - entity.position.x);
           const dy = Math.abs(playerPosition.y - entity.position.y);
           if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
             if (entity.type === EntityType.BONUS) {
+              pickedUpBonus = true;
               soundManager.playStar();
               createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
-              setGameState(prev => ({ 
-                ...prev, 
-                isInvincible: true, 
-                invincibilityTime: INVINCIBILITY_DURATION,
-                score: prev.score + 1000 
-              }));
               setEntities(prev => prev.filter(e => e.id !== entity.id));
-            } else {
-              // A dangerous obstacle or car hit detected
-              collisionTriggeredThisFrame = true; 
+            } else if (isHarmable) {
+              crashed = true;
               soundManager.playCrash();
               setShake(25);
               createParticles(playerPosition.x, playerPosition.y, '#ff3333', 35);
-              setGameState(prev => {
-                const newLives = prev.lives - 1;
-                const isGameOver = newLives <= 0;
-                if (isGameOver) {
-                  soundManager.stopBGM();
-                  soundManager.playGameOver();
-                }
-                return { 
-                  ...prev, 
-                  status: isGameOver ? GameStatus.GAME_OVER : GameStatus.COLLISION_PAUSE, 
-                  lives: Math.max(0, newLives),
-                  score: Math.max(0, prev.score - 500),
-                  recoveryTime: RECOVERY_PAUSE_DURATION,
-                  recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION 
-                };
-              });
+              break; 
             }
           }
+        }
+
+        // Apply All Changes to Game State in one Batch
+        setGameState(prev => {
+          let nextTimeLeft = prev.timeLeft - deltaTime;
+          if (nextTimeLeft <= 0) {
+            soundManager.stopBGM();
+            const status = prev.level === MAX_LEVELS ? GameStatus.WIN : GameStatus.LEVEL_CLEAR;
+            if (status === GameStatus.WIN) soundManager.playWin();
+            else soundManager.playLevelClear();
+            return { ...prev, status, timeLeft: 0 };
+          }
+
+          if (crashed) {
+            const nextLives = prev.lives - 1;
+            const isGameOver = nextLives <= 0;
+            if (isGameOver) {
+              soundManager.stopBGM();
+              soundManager.playGameOver();
+            }
+            return {
+              ...prev,
+              status: isGameOver ? GameStatus.GAME_OVER : GameStatus.COLLISION_PAUSE,
+              lives: Math.max(0, nextLives),
+              score: Math.max(0, prev.score - 500),
+              recoveryTime: RECOVERY_PAUSE_DURATION,
+              recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION
+            };
+          }
+
+          // Accumulate scores accurately
+          const timeScore = config.speed * 50 * deltaTime;
+          const bonusScore = pickedUpBonus ? 1000 : 0;
+          scoreBuffer.current = prev.score + timeScore + pointsFromPassing + bonusScore;
+
+          return {
+            ...prev,
+            timeLeft: nextTimeLeft,
+            score: scoreBuffer.current,
+            isInvincible: pickedUpBonus ? true : (prev.invincibilityTime - deltaTime > 0),
+            invincibilityTime: pickedUpBonus ? INVINCIBILITY_DURATION : Math.max(0, prev.invincibilityTime - deltaTime),
+            recoveryInvincibilityTime: Math.max(0, prev.recoveryInvincibilityTime - deltaTime)
+          };
         });
+
       } else if (gameState.status === GameStatus.COLLISION_PAUSE) {
         soundManager.setEngineSpeed(0, false);
         setGameState(prev => {
           const nextRec = prev.recoveryTime - deltaTime;
-          let nextRecInvTime = prev.recoveryInvincibilityTime - deltaTime;
+          const nextRecInvTime = prev.recoveryInvincibilityTime - deltaTime;
           return { 
             ...prev, 
             recoveryTime: Math.max(0, nextRec),
@@ -334,8 +333,8 @@ const App: React.FC = () => {
   const handleInputStart = (key: string) => { keysPressed.current[key] = true; };
   const handleInputEnd = (key: string) => { keysPressed.current[key] = false; };
 
-  // Keep controls mounted during crash pause so pointer up/down events aren't lost
-  const showMobileControls = (gameState.status === GameStatus.PLAYING || gameState.status === GameStatus.COLLISION_PAUSE) && isTouchDevice;
+  const isMenuVisible = [GameStatus.START, GameStatus.LEVEL_CLEAR, GameStatus.GAME_OVER, GameStatus.WIN].includes(gameState.status);
+  const showMobileControls = !isMenuVisible && isTouchDevice;
 
   return (
     <div className="fixed inset-0 bg-slate-950 flex items-center justify-center overflow-hidden font-['Orbitron'] touch-none select-none">
@@ -402,7 +401,7 @@ const App: React.FC = () => {
 
         {/* --- MOBILE CONTROLS --- */}
         {showMobileControls && (
-          <div className={`absolute bottom-0 left-0 right-0 h-52 flex justify-between items-end px-6 pb-10 transition-opacity duration-300 ${gameState.status === GameStatus.COLLISION_PAUSE ? 'opacity-40 pointer-events-none' : 'opacity-100 pointer-events-auto'}`}>
+          <div className={`absolute bottom-0 left-0 right-0 h-52 flex justify-between items-end px-6 pb-10 transition-opacity duration-300 pointer-events-auto z-[70] ${gameState.status === GameStatus.COLLISION_PAUSE ? 'opacity-40' : 'opacity-100'}`}>
             <div className="flex gap-4">
               <ControlBtn icon="L" onStart={() => handleInputStart('ArrowLeft')} onEnd={() => handleInputEnd('ArrowLeft')} />
               <ControlBtn icon="R" onStart={() => handleInputStart('ArrowRight')} onEnd={() => handleInputEnd('ArrowRight')} />
@@ -542,11 +541,11 @@ const GameCanvas: React.FC<{
     // Player Rendering
     ctx.save();
     
-    // Enhanced Blinking Logic
+    // Blinking Logic
     let blinkVisible = true;
     if (isRecovering) {
-      // Faster, distinct blinking (~10Hz)
-      blinkVisible = Math.floor(frameRef.current / 4) % 2 === 0;
+      // Clear, readable blink pattern
+      blinkVisible = Math.floor(frameRef.current / 5) % 2 === 0;
     }
 
     if (blinkVisible) {
