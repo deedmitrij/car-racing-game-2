@@ -10,7 +10,7 @@ export const NPC_CAR_SIZE = { width: 45, height: 85 };
 export const OBSTACLE_SIZE = { width: 55, height: 55 };
 export const BONUS_SIZE = { width: 35, height: 35 };
 
-export const LEVEL_DURATION = 60; 
+export const LEVEL_DURATION = 30; 
 export const MAX_LEVELS = 5;
 export const INITIAL_LIVES = 3;
 export const INVINCIBILITY_DURATION = 5; 

@@ -68,9 +68,9 @@ const App: React.FC = () => {
     const handleResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      // Precision scaling to ensure no clipping
       const scaleW = w / CANVAS_WIDTH;
       const scaleH = h / CANVAS_HEIGHT;
+      // Precision scaling to ensure no clipping on portrait/landscape
       setScale(Math.min(scaleW, scaleH) * 0.98);
     };
 
@@ -251,8 +251,11 @@ const App: React.FC = () => {
         });
 
         const isHarmable = !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
+        let collisionTriggeredThisFrame = false;
         
         entities.forEach(entity => {
+          if (collisionTriggeredThisFrame) return; // Guard against multiple life losses
+
           const dx = Math.abs(playerPosition.x - entity.position.x);
           const dy = Math.abs(playerPosition.y - entity.position.y);
           if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
@@ -267,6 +270,7 @@ const App: React.FC = () => {
               }));
               setEntities(prev => prev.filter(e => e.id !== entity.id));
             } else if (isHarmable) {
+              collisionTriggeredThisFrame = true; // Block subsequent collisions in this frame
               soundManager.playCrash();
               setShake(20);
               createParticles(playerPosition.x, playerPosition.y, '#ff4444', 30);
@@ -389,7 +393,7 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* --- MOBILE CONTROLS (RESTORED BEAUTY) --- */}
+        {/* --- MOBILE CONTROLS --- */}
         {gameState.status === GameStatus.PLAYING && isTouchDevice && (
           <div className="absolute bottom-0 left-0 right-0 h-48 flex justify-between items-end px-6 pb-8 pointer-events-none">
             <div className="flex gap-4 pointer-events-auto">
