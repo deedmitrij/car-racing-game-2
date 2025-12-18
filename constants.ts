@@ -14,7 +14,7 @@ export const LEVEL_DURATION = 30;
 export const MAX_LEVELS = 5;
 export const INITIAL_LIVES = 3;
 export const INVINCIBILITY_DURATION = 5; 
-export const RECOVERY_INVINCIBILITY_DURATION = 3; 
+export const RECOVERY_INVINCIBILITY_DURATION = 5; // Increased to 5s (2s pause + 3s play)
 export const RECOVERY_PAUSE_DURATION = 2; 
 
 export const LEVEL_CONFIGS = [

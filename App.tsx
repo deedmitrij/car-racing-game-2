@@ -165,8 +165,8 @@ const App: React.FC = () => {
           let nextInvTime = prev.invincibilityTime - deltaTime;
           let nextRecInvTime = prev.recoveryInvincibilityTime - deltaTime;
           
-          // Normalized scoring: Added 100 points per second adjusted by speed
-          const pointsToAdd = Math.floor(config.speed * 20 * deltaTime);
+          // Normalized scoring: Float-based accumulation to prevent 0 points at high frame rates
+          const pointsToAdd = config.speed * 50 * deltaTime;
 
           return { 
             ...prev, 
@@ -273,7 +273,7 @@ const App: React.FC = () => {
               }));
               setEntities(prev => prev.filter(e => e.id !== entity.id));
             } else {
-              // This is a dangerous obstacle or car
+              // A dangerous obstacle or car hit detected
               collisionTriggeredThisFrame = true; 
               soundManager.playCrash();
               setShake(25);
@@ -291,7 +291,7 @@ const App: React.FC = () => {
                   lives: Math.max(0, newLives),
                   score: Math.max(0, prev.score - 500),
                   recoveryTime: RECOVERY_PAUSE_DURATION,
-                  recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION // 3 seconds of blinking
+                  recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION 
                 };
               });
             }
@@ -334,6 +334,9 @@ const App: React.FC = () => {
   const handleInputStart = (key: string) => { keysPressed.current[key] = true; };
   const handleInputEnd = (key: string) => { keysPressed.current[key] = false; };
 
+  // Keep controls mounted during crash pause so pointer up/down events aren't lost
+  const showMobileControls = (gameState.status === GameStatus.PLAYING || gameState.status === GameStatus.COLLISION_PAUSE) && isTouchDevice;
+
   return (
     <div className="fixed inset-0 bg-slate-950 flex items-center justify-center overflow-hidden font-['Orbitron'] touch-none select-none">
       <div 
@@ -375,7 +378,7 @@ const App: React.FC = () => {
             subtitle="RACE OVER" 
             onAction={restartGame} 
             buttonLabel="TRY AGAIN" 
-            score={gameState.score}
+            score={Math.floor(gameState.score)}
             playerName={gameState.playerName}
           />
         )}
@@ -385,7 +388,7 @@ const App: React.FC = () => {
             subtitle="CHAMPION ACHIEVED" 
             onAction={restartGame} 
             buttonLabel="NEW SEASON" 
-            score={gameState.score}
+            score={Math.floor(gameState.score)}
             playerName={gameState.playerName}
             win 
           />
@@ -398,14 +401,13 @@ const App: React.FC = () => {
         )}
 
         {/* --- MOBILE CONTROLS --- */}
-        {gameState.status === GameStatus.PLAYING && isTouchDevice && (
-          <div className="absolute bottom-0 left-0 right-0 h-52 flex justify-between items-end px-6 pb-10 pointer-events-none">
-            <div className="flex gap-4 pointer-events-auto">
+        {showMobileControls && (
+          <div className={`absolute bottom-0 left-0 right-0 h-52 flex justify-between items-end px-6 pb-10 transition-opacity duration-300 ${gameState.status === GameStatus.COLLISION_PAUSE ? 'opacity-40 pointer-events-none' : 'opacity-100 pointer-events-auto'}`}>
+            <div className="flex gap-4">
               <ControlBtn icon="L" onStart={() => handleInputStart('ArrowLeft')} onEnd={() => handleInputEnd('ArrowLeft')} />
               <ControlBtn icon="R" onStart={() => handleInputStart('ArrowRight')} onEnd={() => handleInputEnd('ArrowRight')} />
             </div>
-            {/* SWAPPED ORDER: Down then Up */}
-            <div className="flex gap-4 pointer-events-auto">
+            <div className="flex gap-4">
               <ControlBtn icon="D" onStart={() => handleInputStart('ArrowDown')} onEnd={() => handleInputEnd('ArrowDown')} />
               <ControlBtn icon="U" onStart={() => handleInputStart('ArrowUp')} onEnd={() => handleInputEnd('ArrowUp')} />
             </div>
@@ -429,7 +431,7 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
   
   return (
     <div 
-      className="w-24 h-24 bg-slate-900/90 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-600/70 active:scale-90 transition-all shadow-[0_0_20px_rgba(59,130,246,0.4)] touch-none"
+      className="w-24 h-24 bg-slate-900/90 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-600/70 active:scale-90 transition-all shadow-[0_0_20px_rgba(59,130,246,0.4)] touch-none pointer-events-auto"
       onPointerDown={(e) => { 
         e.preventDefault(); 
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -543,7 +545,7 @@ const GameCanvas: React.FC<{
     // Enhanced Blinking Logic
     let blinkVisible = true;
     if (isRecovering) {
-      // Faster, distinct blinking (approx 10Hz)
+      // Faster, distinct blinking (~10Hz)
       blinkVisible = Math.floor(frameRef.current / 4) % 2 === 0;
     }
 
