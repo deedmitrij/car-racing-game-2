@@ -73,6 +73,7 @@ const App: React.FC = () => {
 
   const [scale, setScale] = useState(1);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [showPoliceWarning, setShowPoliceWarning] = useState(false);
   
   const playerPosRef = useRef({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 });
   const entitiesRef = useRef<Entity[]>([]);
@@ -85,6 +86,7 @@ const App: React.FC = () => {
   const lastTimeRef = useRef<number | undefined>(undefined);
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const lastSpawnTime = useRef<number>(0);
+  const nextPoliceSpawnTime = useRef<number>(0);
   const policeSpawnedCount = useRef(0);
   
   const stateRef = useRef(gameState);
@@ -144,6 +146,8 @@ const App: React.FC = () => {
     collisionLockRef.current = false;
     shakeRef.current = 0;
     policeSpawnedCount.current = 0;
+    nextPoliceSpawnTime.current = performance.now() + 5000; // First police after 5s
+    setShowPoliceWarning(false);
     
     const isFirstLevel = level === 1;
     if (isFirstLevel) {
@@ -180,6 +184,8 @@ const App: React.FC = () => {
     collisionLockRef.current = false;
     shakeRef.current = 0;
     policeSpawnedCount.current = 0;
+    nextPoliceSpawnTime.current = 0;
+    setShowPoliceWarning(false);
     soundManager.stopBGM();
     setGameState(prev => ({
       ...prev,
@@ -219,9 +225,8 @@ const App: React.FC = () => {
         let nx = playerPosRef.current.x;
         let ny = playerPosRef.current.y;
 
-        // Apply Skid Logic
         if (gameState.isSkidding) {
-          nx += gameState.skidDirection * 5.5; // Uncontrollable sideways drift
+          nx += gameState.skidDirection * 5.5;
         } else {
           if (keysPressed.current['ArrowLeft'] || keysPressed.current['a']) nx -= moveSpeed;
           if (keysPressed.current['ArrowRight'] || keysPressed.current['d']) nx += moveSpeed;
@@ -250,7 +255,7 @@ const App: React.FC = () => {
 
         const isCurrentlyHarmable = !collisionLockRef.current && !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
 
-        // Police AI: Constant Weaving
+        // Police AI: Weaving
         const nextEntities = entitiesRef.current.map(e => {
           let nextX = e.position.x;
           let nextTarget = e.targetLaneX || e.position.x;
@@ -286,6 +291,7 @@ const App: React.FC = () => {
           }
         }
 
+        // --- IMPROVED SEQUENTIAL POLICE SPAWNING ---
         if (time - lastSpawnTime.current > 500) { 
           const lane = LANES[Math.floor(Math.random() * LANES.length)];
           const isLaneOccupied = filteredEntities.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 150);
@@ -293,18 +299,36 @@ const App: React.FC = () => {
           if (!isLaneOccupied) {
             const theme = LEVEL_THEMES[gameState.level - 1];
             const rand = Math.random();
-            const shouldSpawnPolice = config.policeCount > 0 && policeSpawnedCount.current < config.policeCount && Math.random() < 0.08;
+            
+            // Show warning 1 second before police arrives
+            if (config.policeCount > 0 && 
+                policeSpawnedCount.current < config.policeCount && 
+                time > nextPoliceSpawnTime.current - 1500 && 
+                time < nextPoliceSpawnTime.current) {
+              setShowPoliceWarning(true);
+            } else {
+              setShowPoliceWarning(false);
+            }
 
-            if (shouldSpawnPolice) {
+            // Spawn Police Car if time is up
+            if (config.policeCount > 0 && 
+                policeSpawnedCount.current < config.policeCount && 
+                time >= nextPoliceSpawnTime.current) {
+              
               filteredEntities.push({
                 id: Math.random().toString(), type: EntityType.POLICE_CAR,
                 position: { x: lane, y: -100 }, width: NPC_CAR_SIZE.width, height: NPC_CAR_SIZE.height,
                 speed: config.speed, color: '#64748b',
                 targetLaneX: LANES[Math.floor(Math.random() * LANES.length)]
               });
+              
               policeSpawnedCount.current++;
+              // Minimum 8 second gap before the next one starts appearing
+              nextPoliceSpawnTime.current = time + 8000 + (Math.random() * 3000); 
               lastSpawnTime.current = time;
-            } else if (rand < config.trafficDensity) {
+            } 
+            // Only spawn regular traffic if we are NOT currently spawning a police car
+            else if (rand < config.trafficDensity) {
               filteredEntities.push({
                 id: Math.random().toString(), type: EntityType.NPC_CAR,
                 position: { x: lane, y: -100 }, width: NPC_CAR_SIZE.width, height: NPC_CAR_SIZE.height,
@@ -352,7 +376,6 @@ const App: React.FC = () => {
               entitiesRef.current = entitiesRef.current.filter(e => e.id !== entity.id);
             } else if (entity.type === EntityType.OIL_SPILL) {
               hitOil = true;
-              // Don't remove oil, it stays on road
             } else if (isCurrentlyHarmable) {
               collisionLockRef.current = true;
               crashed = true;
@@ -496,6 +519,20 @@ const App: React.FC = () => {
         
         <HUD gameState={gameState} />
 
+        {/* POLICE WARNING OVERLAY */}
+        {showPoliceWarning && gameState.status === GameStatus.PLAYING && (
+          <div className="absolute top-1/3 left-0 right-0 flex flex-col items-center justify-center z-[55] animate-pulse">
+            <div className="bg-red-600/90 text-white px-8 py-2 font-black italic text-xl skew-x-[-15deg] shadow-[0_0_30px_rgba(220,38,38,0.8)] border-y-2 border-white">
+              POLICE INCOMING
+            </div>
+            <div className="flex gap-4 mt-2">
+              <div className="w-12 h-2 bg-blue-500 animate-bounce"></div>
+              <div className="w-12 h-2 bg-red-500 animate-bounce [animation-delay:0.2s]"></div>
+              <div className="w-12 h-2 bg-blue-500 animate-bounce [animation-delay:0.4s]"></div>
+            </div>
+          </div>
+        )}
+
         {gameState.status === GameStatus.START && (
           <Menu 
             title="NEON TURBO" 
@@ -504,7 +541,7 @@ const App: React.FC = () => {
             showNameInput
             playerName={gameState.playerName}
             setPlayerName={(n) => setGameState(p => ({ ...p, playerName: n }))}
-            highScores={[]} 
+            highScores={gameState.highScores} 
           />
         )}
         {gameState.status === GameStatus.LEVEL_CLEAR && (
@@ -690,7 +727,7 @@ const GameCanvas: React.FC<{
       ctx.save();
       if (isSkidding) {
         ctx.translate(playerPosition.x, playerPosition.y);
-        ctx.rotate(Math.sin(frame * 0.2) * 0.15); // Shake while skidding
+        ctx.rotate(Math.sin(frame * 0.2) * 0.15); 
         ctx.translate(-playerPosition.x, -playerPosition.y);
       }
       ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER; ctx.globalAlpha = 0.25; drawRoundRect(ctx, playerPosition.x - 28, playerPosition.y - 48, 56, 96, 14); ctx.fill();

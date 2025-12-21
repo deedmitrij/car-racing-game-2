@@ -34,7 +34,7 @@ export const LEVEL_THEMES = [
   { road: '#061706', border: '#22c55e', grid: '#064e3b', npc: ['#84cc16', '#10b981', '#fbbf24', '#ffffff'] },
   { road: '#170617', border: '#d946ef', grid: '#4a044e', npc: ['#f472b6', '#818cf8', '#2dd4bf', '#ffffff'] },
   { road: '#170f06', border: '#f97316', grid: '#431407', npc: ['#ef4444', '#eab308', '#ffffff', '#94a3b8'] },
-  { road: '#1e1e1e', border: '#fbbf24', grid: '#422006', npc: ['#fde047', '#ffffff', '#cbd5e1', '#00f2ff'] },
+  { road: '#020203', border: '#eab308', grid: '#0a0a0a', npc: ['#fbbf24', '#ffffff', '#334155', '#1e3a8a'] },
 ];
 
 export const COLORS = {
