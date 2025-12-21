@@ -11,7 +11,9 @@ export enum GameStatus {
 export enum EntityType {
   NPC_CAR = 'NPC_CAR',
   OBSTACLE = 'OBSTACLE',
-  BONUS = 'BONUS'
+  BONUS = 'BONUS',
+  POLICE_CAR = 'POLICE_CAR',
+  OIL_SPILL = 'OIL_SPILL'
 }
 
 export interface Vector2D {
@@ -27,6 +29,12 @@ export interface Entity {
   height: number;
   speed: number;
   color: string;
+  targetLaneX?: number; // Used for Police AI steering
+}
+
+export interface HighScore {
+  name: string;
+  score: number;
 }
 
 export interface GameState {
@@ -36,8 +44,13 @@ export interface GameState {
   lives: number;
   timeLeft: number;
   score: number;
-  isInvincible: boolean; // From Bonus
+  isInvincible: boolean;
   invincibilityTime: number;
-  recoveryInvincibilityTime: number; // For blinking after crash
-  recoveryTime: number; // The pause duration
+  recoveryInvincibilityTime: number;
+  recoveryTime: number;
+  highScores: HighScore[];
+  lastNearMissTime: number;
+  isSkidding: boolean;
+  skidTime: number;
+  skidDirection: number; // -1 for left, 1 for right
 }

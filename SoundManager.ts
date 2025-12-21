@@ -52,8 +52,8 @@ class SoundManager {
     const context = this.ctx;
     if (!context || !this.engineOsc || !this.engineGain) return;
     
-    // Increased targetGain from 0.15 to 0.45 for much better audibility
-    const targetFreq = 45 + (speed * 18);
+    // Increased frequency multiplier from 18 to 35 to compensate for lower numeric speed range (2-6)
+    const targetFreq = 50 + (speed * 35);
     const targetGain = active ? 0.45 : 0;
     
     this.engineOsc.frequency.setTargetAtTime(targetFreq, context.currentTime, 0.1);

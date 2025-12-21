@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { GameStatus, GameState, Entity, EntityType } from './types';
+import { GameStatus, GameState, Entity, EntityType, HighScore } from './types';
 import { 
   CANVAS_WIDTH, 
   CANVAS_HEIGHT, 
@@ -9,6 +9,7 @@ import {
   NPC_CAR_SIZE, 
   OBSTACLE_SIZE, 
   BONUS_SIZE,
+  OIL_SIZE,
   INITIAL_LIVES,
   LEVEL_DURATION,
   MAX_LEVELS,
@@ -18,7 +19,10 @@ import {
   INVINCIBILITY_DURATION,
   RECOVERY_INVINCIBILITY_DURATION,
   LANES,
-  COLORS
+  COLORS,
+  NEAR_MISS_THRESHOLD,
+  NEAR_MISS_POINTS,
+  HIGH_SCORES_KEY
 } from './constants';
 import { soundManager } from './SoundManager';
 import HUD from './components/HUD';
@@ -33,10 +37,6 @@ interface Particle {
   color: string;
 }
 
-/**
- * Safari 15 and below don't support roundRect. 
- * This helper ensures the game renders correctly on older browsers.
- */
 const drawRoundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
   if (w < 2 * r) r = w / 2;
   if (h < 2 * r) r = h / 2;
@@ -50,27 +50,34 @@ const drawRoundRect = (ctx: CanvasRenderingContext2D, x: number, y: number, w: n
 };
 
 const App: React.FC = () => {
-  const [gameState, setGameState] = useState<GameState>({
-    status: GameStatus.START,
-    playerName: 'DRIVER 01',
-    level: 1,
-    lives: INITIAL_LIVES,
-    timeLeft: LEVEL_DURATION,
-    score: 0,
-    isInvincible: false,
-    invincibilityTime: 0,
-    recoveryInvincibilityTime: 0,
-    recoveryTime: 0,
+  const [gameState, setGameState] = useState<GameState>(() => {
+    const saved = localStorage.getItem(HIGH_SCORES_KEY);
+    return {
+      status: GameStatus.START,
+      playerName: 'DRIVER 01',
+      level: 1,
+      lives: INITIAL_LIVES,
+      timeLeft: LEVEL_DURATION,
+      score: 0,
+      isInvincible: false,
+      invincibilityTime: 0,
+      recoveryInvincibilityTime: 0,
+      recoveryTime: 0,
+      highScores: saved ? JSON.parse(saved) : [],
+      lastNearMissTime: 0,
+      isSkidding: false,
+      skidTime: 0,
+      skidDirection: 0
+    };
   });
 
   const [scale, setScale] = useState(1);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   
-  // High-frequency refs to keep the loop stable and avoid React thrashing
   const playerPosRef = useRef({ x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT - 160 });
   const entitiesRef = useRef<Entity[]>([]);
   const roadOffsetRef = useRef(0);
-  const collisionLockRef = useRef(false); // Prevents multiple hits in rapid succession
+  const collisionLockRef = useRef(false);
   const scoreBuffer = useRef(0);
   const shakeRef = useRef(0);
   const particlesRef = useRef<Particle[]>([]);
@@ -78,12 +85,11 @@ const App: React.FC = () => {
   const lastTimeRef = useRef<number | undefined>(undefined);
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const lastSpawnTime = useRef<number>(0);
+  const policeSpawnedCount = useRef(0);
   
-  // Mirror state in a ref for access within the stable update loop
   const stateRef = useRef(gameState);
   useEffect(() => { 
     stateRef.current = gameState;
-    // Release collision lock when we are safely in recovery or invincibility
     if (gameState.status === GameStatus.COLLISION_PAUSE || gameState.recoveryInvincibilityTime > 0 || gameState.isInvincible) {
       collisionLockRef.current = false;
     }
@@ -101,11 +107,9 @@ const App: React.FC = () => {
       const scaleH = h / CANVAS_HEIGHT;
       setScale(Math.min(scaleW, scaleH) * 0.96);
     };
-
     const checkTouch = () => {
       setIsTouchDevice('ontouchstart' in window || navigator.maxTouchPoints > 0);
     };
-
     handleResize();
     checkTouch();
     window.addEventListener('resize', handleResize);
@@ -115,6 +119,14 @@ const App: React.FC = () => {
       window.removeEventListener('blur', clearInputs);
     };
   }, [clearInputs]);
+
+  const updateHighScoresLocally = (name: string, score: number, currentHighScores: HighScore[]) => {
+    const newScores = [...currentHighScores, { name, score: Math.floor(score) }]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+    localStorage.setItem(HIGH_SCORES_KEY, JSON.stringify(newScores));
+    return newScores;
+  };
 
   const createParticles = (x: number, y: number, color: string, count: number) => {
     for (let i = 0; i < count; i++) {
@@ -131,6 +143,7 @@ const App: React.FC = () => {
     clearInputs();
     collisionLockRef.current = false;
     shakeRef.current = 0;
+    policeSpawnedCount.current = 0;
     
     const isFirstLevel = level === 1;
     if (isFirstLevel) {
@@ -153,6 +166,8 @@ const App: React.FC = () => {
       invincibilityTime: 0,
       recoveryInvincibilityTime: 0,
       recoveryTime: 0,
+      isSkidding: false,
+      skidTime: 0
     }));
 
     entitiesRef.current = [];
@@ -164,10 +179,11 @@ const App: React.FC = () => {
     scoreBuffer.current = 0;
     collisionLockRef.current = false;
     shakeRef.current = 0;
+    policeSpawnedCount.current = 0;
     soundManager.stopBGM();
-    setGameState({
+    setGameState(prev => ({
+      ...prev,
       status: GameStatus.START,
-      playerName: stateRef.current.playerName,
       level: 1,
       lives: INITIAL_LIVES,
       timeLeft: LEVEL_DURATION,
@@ -176,7 +192,9 @@ const App: React.FC = () => {
       invincibilityTime: 0,
       recoveryInvincibilityTime: 0,
       recoveryTime: 0,
-    });
+      isSkidding: false,
+      skidTime: 0
+    }));
     entitiesRef.current = [];
     particlesRef.current = [];
   };
@@ -187,26 +205,29 @@ const App: React.FC = () => {
     if (lastTimeRef.current !== undefined) {
       const deltaTime = (time - lastTimeRef.current) / 1000;
 
-      // 1. Particle and Screen Shake Updates
       particlesRef.current.forEach(p => {
         p.x += p.vx; p.y += p.vy; p.life -= deltaTime * 2;
       });
       particlesRef.current = particlesRef.current.filter(p => p.life > 0);
       if (shakeRef.current > 0) shakeRef.current = Math.max(0, shakeRef.current - deltaTime * 40);
 
-      // 2. Main Game Logic
       if (gameState.status === GameStatus.PLAYING) {
         const config = LEVEL_CONFIGS[gameState.level - 1];
         soundManager.setEngineSpeed(config.speed, true);
 
-        // Movement Logic
         const moveSpeed = 8;
         let nx = playerPosRef.current.x;
         let ny = playerPosRef.current.y;
-        if (keysPressed.current['ArrowLeft'] || keysPressed.current['a']) nx -= moveSpeed;
-        if (keysPressed.current['ArrowRight'] || keysPressed.current['d']) nx += moveSpeed;
-        if (keysPressed.current['ArrowUp'] || keysPressed.current['w']) ny -= moveSpeed * 0.8;
-        if (keysPressed.current['ArrowDown'] || keysPressed.current['s']) ny += moveSpeed * 0.8;
+
+        // Apply Skid Logic
+        if (gameState.isSkidding) {
+          nx += gameState.skidDirection * 5.5; // Uncontrollable sideways drift
+        } else {
+          if (keysPressed.current['ArrowLeft'] || keysPressed.current['a']) nx -= moveSpeed;
+          if (keysPressed.current['ArrowRight'] || keysPressed.current['d']) nx += moveSpeed;
+          if (keysPressed.current['ArrowUp'] || keysPressed.current['w']) ny -= moveSpeed * 0.8;
+          if (keysPressed.current['ArrowDown'] || keysPressed.current['s']) ny += moveSpeed * 0.8;
+        }
 
         const roadX = (CANVAS_WIDTH - ROAD_WIDTH) / 2;
         const leftBound = roadX + PLAYER_SIZE.width / 2 + 10;
@@ -221,33 +242,69 @@ const App: React.FC = () => {
 
         roadOffsetRef.current = (roadOffsetRef.current + config.speed) % 80;
 
-        // Entity Management
         let pointsFromPassing = 0;
+        let nearMissDetected = false;
         let pickedUpBonus = false;
+        let hitOil = false;
         let crashed = false;
 
-        const nextEntities = entitiesRef.current.map(e => ({ ...e, position: { ...e.position, y: e.position.y + config.speed } }));
-        const filteredEntities: Entity[] = [];
-        
-        for (const e of nextEntities) {
-          if (e.position.y - e.height / 2 > CANVAS_HEIGHT) {
-            if (e.type === EntityType.NPC_CAR || e.type === EntityType.OBSTACLE) {
-              pointsFromPassing += 250; 
+        const isCurrentlyHarmable = !collisionLockRef.current && !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
+
+        // Police AI: Constant Weaving
+        const nextEntities = entitiesRef.current.map(e => {
+          let nextX = e.position.x;
+          let nextTarget = e.targetLaneX || e.position.x;
+
+          if (e.type === EntityType.POLICE_CAR) {
+            if (Math.abs(nextX - nextTarget) > 2) {
+              nextX += (nextTarget - nextX) * 0.05; 
+            } else {
+              const currentLaneIdx = LANES.indexOf(nextTarget);
+              const possibleLanes = LANES.filter((_, i) => i !== currentLaneIdx);
+              e.targetLaneX = possibleLanes[Math.floor(Math.random() * possibleLanes.length)];
             }
+          }
+          return { ...e, position: { x: nextX, y: e.position.y + config.speed } };
+        });
+
+        const filteredEntities: Entity[] = [];
+        for (const e of nextEntities) {
+          const passedY = e.position.y - e.height / 2 > playerPosRef.current.y + PLAYER_SIZE.height / 2;
+          const previouslyUnpassed = entitiesRef.current.find(old => old.id === e.id && old.position.y - old.height / 2 <= playerPosRef.current.y + PLAYER_SIZE.height / 2);
+
+          if (e.position.y - e.height / 2 > CANVAS_HEIGHT) {
+            if (e.type !== EntityType.BONUS && e.type !== EntityType.OIL_SPILL) pointsFromPassing += 250; 
           } else {
+            if (isCurrentlyHarmable && passedY && previouslyUnpassed && (e.type === EntityType.NPC_CAR || e.type === EntityType.POLICE_CAR || e.type === EntityType.OBSTACLE)) {
+              const dx = Math.abs(playerPosRef.current.x - e.position.x);
+              const collisionDist = (PLAYER_SIZE.width + e.width) / 2;
+              if (dx < collisionDist + NEAR_MISS_THRESHOLD && dx >= collisionDist - 8) {
+                nearMissDetected = true;
+              }
+            }
             filteredEntities.push(e);
           }
         }
 
-        // Spawn New Entities
-        if (time - lastSpawnTime.current > 600) {
+        if (time - lastSpawnTime.current > 500) { 
           const lane = LANES[Math.floor(Math.random() * LANES.length)];
-          const isLaneOccupied = filteredEntities.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 200);
+          const isLaneOccupied = filteredEntities.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 150);
           
           if (!isLaneOccupied) {
             const theme = LEVEL_THEMES[gameState.level - 1];
             const rand = Math.random();
-            if (rand < config.trafficDensity) {
+            const shouldSpawnPolice = config.policeCount > 0 && policeSpawnedCount.current < config.policeCount && Math.random() < 0.08;
+
+            if (shouldSpawnPolice) {
+              filteredEntities.push({
+                id: Math.random().toString(), type: EntityType.POLICE_CAR,
+                position: { x: lane, y: -100 }, width: NPC_CAR_SIZE.width, height: NPC_CAR_SIZE.height,
+                speed: config.speed, color: '#64748b',
+                targetLaneX: LANES[Math.floor(Math.random() * LANES.length)]
+              });
+              policeSpawnedCount.current++;
+              lastSpawnTime.current = time;
+            } else if (rand < config.trafficDensity) {
               filteredEntities.push({
                 id: Math.random().toString(), type: EntityType.NPC_CAR,
                 position: { x: lane, y: -100 }, width: NPC_CAR_SIZE.width, height: NPC_CAR_SIZE.height,
@@ -268,26 +325,35 @@ const App: React.FC = () => {
                 speed: config.speed, color: COLORS.INVINCIBLE
               });
               lastSpawnTime.current = time;
+            } else if (rand < config.trafficDensity + config.obstacleDensity + config.bonusDensity + (config.oilDensity || 0)) {
+              filteredEntities.push({
+                id: Math.random().toString(), type: EntityType.OIL_SPILL,
+                position: { x: lane, y: -100 }, width: OIL_SIZE.width, height: OIL_SIZE.height,
+                speed: config.speed, color: COLORS.OIL
+              });
+              lastSpawnTime.current = time;
             }
           }
         }
         entitiesRef.current = filteredEntities;
 
-        // Collision Check
-        // Synchronous check using Ref guards
-        const isCurrentlyHarmable = !collisionLockRef.current && !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
-        
         for (const entity of entitiesRef.current) {
           const dx = Math.abs(playerPosRef.current.x - entity.position.x);
           const dy = Math.abs(playerPosRef.current.y - entity.position.y);
-          if (dx < (PLAYER_SIZE.width + entity.width) / 2 - 12 && dy < (PLAYER_SIZE.height + entity.height) / 2 - 12) {
+          
+          const horizontalBox = (PLAYER_SIZE.width + entity.width) / 2 - 6;
+          const verticalBox = (PLAYER_SIZE.height + entity.height) / 2 - 10;
+          
+          if (dx < horizontalBox && dy < verticalBox) {
             if (entity.type === EntityType.BONUS) {
               pickedUpBonus = true;
               soundManager.playStar();
               createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
               entitiesRef.current = entitiesRef.current.filter(e => e.id !== entity.id);
+            } else if (entity.type === EntityType.OIL_SPILL) {
+              hitOil = true;
+              // Don't remove oil, it stays on road
             } else if (isCurrentlyHarmable) {
-              // Lock collision detection immediately
               collisionLockRef.current = true;
               crashed = true;
               soundManager.playCrash();
@@ -298,40 +364,61 @@ const App: React.FC = () => {
           }
         }
 
-        // Apply All Changes to Game State in one atomic functional update
         setGameState(prev => {
-          // If we already transitioned out of PLAYING in a previous frame's queued update, skip
           if (prev.status !== GameStatus.PLAYING) return prev;
 
           let nextTimeLeft = prev.timeLeft - deltaTime;
           if (nextTimeLeft <= 0) {
             soundManager.stopBGM();
-            const status = prev.level === MAX_LEVELS ? GameStatus.WIN : GameStatus.LEVEL_CLEAR;
-            if (status === GameStatus.WIN) soundManager.playWin();
-            else soundManager.playLevelClear();
-            return { ...prev, status, timeLeft: 0 };
+            const isFinalWin = prev.level === MAX_LEVELS;
+            const status = isFinalWin ? GameStatus.WIN : GameStatus.LEVEL_CLEAR;
+            let finalScores = prev.highScores;
+            if (isFinalWin) {
+              soundManager.playWin();
+              finalScores = updateHighScoresLocally(prev.playerName, prev.score, prev.highScores);
+            } else {
+              soundManager.playLevelClear();
+            }
+            return { ...prev, status, timeLeft: 0, highScores: finalScores };
           }
 
           if (crashed) {
             const nextLives = prev.lives - 1;
             const isGameOver = nextLives <= 0;
+            const penalizedScore = Math.max(0, prev.score - 500);
+            scoreBuffer.current = penalizedScore;
+
+            let finalScores = prev.highScores;
             if (isGameOver) {
               soundManager.stopBGM();
               soundManager.playGameOver();
+              finalScores = updateHighScoresLocally(prev.playerName, penalizedScore, prev.highScores);
             }
             return {
               ...prev,
               status: isGameOver ? GameStatus.GAME_OVER : GameStatus.COLLISION_PAUSE,
               lives: Math.max(0, nextLives),
-              score: Math.max(0, prev.score - 500),
+              score: penalizedScore,
               recoveryTime: RECOVERY_PAUSE_DURATION,
-              recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION
+              recoveryInvincibilityTime: RECOVERY_INVINCIBILITY_DURATION,
+              highScores: finalScores,
+              isSkidding: false,
+              skidTime: 0
             };
           }
 
           const timeScore = config.speed * 50 * deltaTime;
           const bonusScore = pickedUpBonus ? 1000 : 0;
-          scoreBuffer.current = prev.score + timeScore + pointsFromPassing + bonusScore;
+          const nearMissScore = nearMissDetected ? NEAR_MISS_POINTS : 0;
+          scoreBuffer.current = prev.score + timeScore + pointsFromPassing + bonusScore + nearMissScore;
+
+          let nextSkidTime = Math.max(0, prev.skidTime - deltaTime);
+          let currentlySkidding = hitOil ? true : nextSkidTime > 0;
+          let skidDir = prev.skidDirection;
+          if (hitOil && !prev.isSkidding) {
+            nextSkidTime = 1.2;
+            skidDir = Math.random() < 0.5 ? -1 : 1;
+          }
 
           return {
             ...prev,
@@ -339,7 +426,11 @@ const App: React.FC = () => {
             score: scoreBuffer.current,
             isInvincible: pickedUpBonus ? true : (prev.invincibilityTime - deltaTime > 0),
             invincibilityTime: pickedUpBonus ? INVINCIBILITY_DURATION : Math.max(0, prev.invincibilityTime - deltaTime),
-            recoveryInvincibilityTime: Math.max(0, prev.recoveryInvincibilityTime - deltaTime)
+            recoveryInvincibilityTime: Math.max(0, prev.recoveryInvincibilityTime - deltaTime),
+            lastNearMissTime: nearMissDetected ? time : prev.lastNearMissTime,
+            isSkidding: currentlySkidding,
+            skidTime: nextSkidTime,
+            skidDirection: skidDir
           };
         });
 
@@ -361,14 +452,13 @@ const App: React.FC = () => {
     }
     lastTimeRef.current = time;
     requestRef.current = requestAnimationFrame(update);
-  }, []); // Stable loop
+  }, []);
 
   useEffect(() => {
     const onKD = (e: KeyboardEvent) => { keysPressed.current[e.key] = true; };
     const onKU = (e: KeyboardEvent) => { keysPressed.current[e.key] = false; };
     window.addEventListener('keydown', onKD);
     window.addEventListener('keyup', onKU);
-    
     requestRef.current = requestAnimationFrame(update);
     return () => {
       window.removeEventListener('keydown', onKD);
@@ -401,6 +491,7 @@ const App: React.FC = () => {
           isPaused={gameState.status === GameStatus.COLLISION_PAUSE}
           particlesRef={particlesRef}
           level={gameState.level}
+          isSkidding={gameState.isSkidding}
         />
         
         <HUD gameState={gameState} />
@@ -413,6 +504,7 @@ const App: React.FC = () => {
             showNameInput
             playerName={gameState.playerName}
             setPlayerName={(n) => setGameState(p => ({ ...p, playerName: n }))}
+            highScores={[]} 
           />
         )}
         {gameState.status === GameStatus.LEVEL_CLEAR && (
@@ -426,6 +518,7 @@ const App: React.FC = () => {
             buttonLabel="TRY AGAIN" 
             score={Math.floor(gameState.score)}
             playerName={gameState.playerName}
+            highScores={gameState.highScores}
           />
         )}
         {gameState.status === GameStatus.WIN && (
@@ -436,6 +529,7 @@ const App: React.FC = () => {
             buttonLabel="NEW SEASON" 
             score={Math.floor(gameState.score)}
             playerName={gameState.playerName}
+            highScores={gameState.highScores}
             win 
           />
         )}
@@ -473,15 +567,10 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
       default: return "";
     }
   };
-  
   return (
     <div 
       className="w-24 h-24 bg-slate-900/90 border-2 border-blue-500/50 rounded-2xl flex items-center justify-center active:bg-blue-600/70 active:scale-90 transition-all shadow-[0_0_20px_rgba(37,99,235,0.4)] touch-none pointer-events-auto"
-      onPointerDown={(e) => { 
-        e.preventDefault(); 
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        onStart(); 
-      }}
+      onPointerDown={(e) => { e.preventDefault(); (e.target as HTMLElement).setPointerCapture(e.pointerId); onStart(); }}
       onPointerUp={(e) => { e.preventDefault(); onEnd(); }}
       onPointerCancel={(e) => { e.preventDefault(); onEnd(); }}
     >
@@ -495,8 +584,8 @@ const ControlBtn: React.FC<{ icon: string, onStart: () => void, onEnd: () => voi
 const GameCanvas: React.FC<{
   playerPosRef: React.RefObject<{x: number, y: number}>, entitiesRef: React.RefObject<Entity[]>, 
   roadOffsetRef: React.RefObject<number>, isInvincible: boolean, isRecovering: boolean, 
-  isPaused: boolean, particlesRef: React.RefObject<Particle[]>, level: number
-}> = ({ playerPosRef, entitiesRef, roadOffsetRef, isInvincible, isRecovering, isPaused, particlesRef, level }) => {
+  isPaused: boolean, particlesRef: React.RefObject<Particle[]>, level: number, isSkidding: boolean
+}> = ({ playerPosRef, entitiesRef, roadOffsetRef, isInvincible, isRecovering, isPaused, particlesRef, level, isSkidding }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number>(0);
   const theme = LEVEL_THEMES[Math.max(0, level - 1)];
@@ -504,7 +593,6 @@ const GameCanvas: React.FC<{
   const draw = useCallback(() => {
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
-    
     animFrameRef.current++;
     const frame = animFrameRef.current;
     const playerPosition = playerPosRef.current!;
@@ -512,136 +600,121 @@ const GameCanvas: React.FC<{
     const roadOffset = roadOffsetRef.current!;
     const particles = particlesRef.current!;
 
-    // Base Background
     ctx.fillStyle = '#020617';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    
-    // Grid
-    ctx.strokeStyle = theme.grid;
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= CANVAS_WIDTH; x += 50) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_HEIGHT); ctx.stroke();
-    }
-    for (let y = (roadOffset % 50); y <= CANVAS_HEIGHT; y += 50) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke();
-    }
+    ctx.strokeStyle = theme.grid; ctx.lineWidth = 1;
+    for (let x = 0; x <= CANVAS_WIDTH; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_HEIGHT); ctx.stroke(); }
+    for (let y = (roadOffset % 50); y <= CANVAS_HEIGHT; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke(); }
 
-    // Road System
     const roadX = (CANVAS_WIDTH - ROAD_WIDTH) / 2;
     ctx.fillStyle = theme.road;
     ctx.fillRect(roadX, 0, ROAD_WIDTH, CANVAS_HEIGHT);
-    
-    // Road Markings
-    ctx.strokeStyle = theme.border;
-    ctx.lineWidth = 4;
-    ctx.setLineDash([40, 40]);
-    ctx.lineDashOffset = -roadOffset * 2;
-    
+    ctx.strokeStyle = theme.border; ctx.lineWidth = 4; ctx.setLineDash([40, 40]); ctx.lineDashOffset = -roadOffset * 2;
     for (let i = 1; i < 4; i++) {
        const lx = roadX + (i * (ROAD_WIDTH / 4));
-       ctx.globalAlpha = 0.3;
-       ctx.lineWidth = 8;
-       ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
-       ctx.globalAlpha = 1;
-       ctx.lineWidth = 4;
-       ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
+       ctx.globalAlpha = 0.3; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
+       ctx.globalAlpha = 1; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, CANVAS_HEIGHT); ctx.stroke();
     }
+    ctx.setLineDash([]); ctx.strokeStyle = theme.border; ctx.lineWidth = 12; ctx.globalAlpha = 0.2; ctx.strokeRect(roadX, -10, ROAD_WIDTH, CANVAS_HEIGHT + 20);
+    ctx.lineWidth = 6; ctx.globalAlpha = 1; ctx.strokeRect(roadX, -10, ROAD_WIDTH, CANVAS_HEIGHT + 20);
 
-    ctx.setLineDash([]);
-    ctx.strokeStyle = theme.border;
-    ctx.lineWidth = 12; ctx.globalAlpha = 0.2;
-    ctx.strokeRect(roadX, -10, ROAD_WIDTH, CANVAS_HEIGHT + 20);
-    ctx.lineWidth = 6; ctx.globalAlpha = 1;
-    ctx.strokeRect(roadX, -10, ROAD_WIDTH, CANVAS_HEIGHT + 20);
-
-    // Particles
-    particles.forEach(p => {
-      ctx.globalAlpha = p.life;
-      ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.1, 3 * p.life), 0, Math.PI * 2); ctx.fill();
-    });
+    particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.1, 3 * p.life), 0, Math.PI * 2); ctx.fill(); });
     ctx.globalAlpha = 1;
 
-    // Entities
     entities.forEach(ent => {
-      if (ent.type === EntityType.NPC_CAR) {
+      if (ent.type === EntityType.NPC_CAR || ent.type === EntityType.POLICE_CAR) {
         ctx.fillStyle = ent.color;
         ctx.globalAlpha = 0.2;
         drawRoundRect(ctx, ent.position.x - ent.width/2 - 6, ent.position.y - ent.height/2 - 6, ent.width+12, ent.height+12, 12); ctx.fill();
         ctx.globalAlpha = 1;
         drawRoundRect(ctx, ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 8); ctx.fill();
-        ctx.fillStyle = '#00000066';
-        ctx.fillRect(ent.position.x - 18, ent.position.y - 25, 36, 12);
-        ctx.fillRect(ent.position.x - 18, ent.position.y + 10, 36, 8);
+        
+        if (ent.type === EntityType.POLICE_CAR) {
+          ctx.fillStyle = '#94a3b8'; 
+          ctx.fillRect(ent.position.x - ent.width/2 + 5, ent.position.y - ent.height/2 + 10, ent.width - 10, ent.height - 20);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(ent.position.x - 12, ent.position.y - 12, 24, 24);
+          ctx.fillStyle = '#000000';
+          ctx.font = 'bold 9px Orbitron';
+          ctx.textAlign = 'center';
+          ctx.fillText('POLICE', ent.position.x, ent.position.y + 3);
+
+          const strobing = Math.floor(frame / 5) % 2 === 0;
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(ent.position.x - 22, ent.position.y - 28, 44, 8);
+          ctx.fillStyle = strobing ? COLORS.POLICE_RED : '#400000';
+          if (strobing) { ctx.shadowBlur = 25; ctx.shadowColor = COLORS.POLICE_RED; }
+          ctx.fillRect(ent.position.x - 20, ent.position.y - 27, 18, 6);
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = !strobing ? COLORS.POLICE_BLUE : '#000040';
+          if (!strobing) { ctx.shadowBlur = 25; ctx.shadowColor = COLORS.POLICE_BLUE; }
+          ctx.fillRect(ent.position.x + 2, ent.position.y - 27, 18, 6);
+          ctx.shadowBlur = 0;
+        } else {
+          ctx.fillStyle = '#00000066';
+          ctx.fillRect(ent.position.x - 18, ent.position.y - 25, 36, 12);
+          ctx.fillRect(ent.position.x - 18, ent.position.y + 10, 36, 8);
+        }
       } else if (ent.type === EntityType.OBSTACLE) {
-        ctx.fillStyle = ent.color;
-        drawRoundRect(ctx, ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 4); ctx.fill();
-        ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3;
-        ctx.strokeRect(ent.position.x - ent.width/2 + 6, ent.position.y - ent.height/2 + 6, ent.width - 12, ent.height - 12);
-      } else {
-        const s = 1 + Math.sin(frame * 0.15) * 0.2;
-        ctx.save(); ctx.translate(ent.position.x, ent.position.y); ctx.scale(s, s); ctx.rotate(frame * 0.05);
-        ctx.fillStyle = COLORS.INVINCIBLE;
-        ctx.globalAlpha = 0.3;
-        drawStar(ctx, 0, 0, 5, 24, 10);
+        ctx.fillStyle = ent.color; drawRoundRect(ctx, ent.position.x - ent.width/2, ent.position.y - ent.height/2, ent.width, ent.height, 4); ctx.fill();
+        ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3; ctx.strokeRect(ent.position.x - ent.width/2 + 6, ent.position.y - ent.height/2 + 6, ent.width - 12, ent.height - 12);
+      } else if (ent.type === EntityType.OIL_SPILL) {
+        ctx.fillStyle = COLORS.OIL;
+        ctx.globalAlpha = 0.6;
+        ctx.beginPath();
+        ctx.ellipse(ent.position.x, ent.position.y, ent.width/2, ent.height/2, Math.PI/6, 0, Math.PI*2);
+        ctx.fill();
         ctx.globalAlpha = 1;
-        drawStar(ctx, 0, 0, 5, 18, 8);
+      } else {
+        const s = 1 + Math.sin(frame * 0.05) * 0.12;
+        ctx.save(); 
+        ctx.translate(ent.position.x, ent.position.y); 
+        ctx.scale(s, s); 
+        ctx.rotate(frame * 0.02);
+        ctx.fillStyle = COLORS.INVINCIBLE; ctx.globalAlpha = 0.3; drawStar(ctx, 0, 0, 5, 24, 10); ctx.globalAlpha = 1; drawStar(ctx, 0, 0, 5, 18, 8); 
         ctx.restore();
       }
     });
 
-    // Player Rendering
     ctx.save();
     let blinkVisible = true;
     if (isRecovering) blinkVisible = Math.floor(frame / 5) % 2 === 0;
-
     if (blinkVisible) {
       if (isInvincible) {
-        const shieldPulse = 1 + Math.sin(frame * 0.2) * 0.05;
-        ctx.save();
-        ctx.strokeStyle = COLORS.INVINCIBLE;
-        ctx.lineWidth = 4;
-        ctx.globalAlpha = 0.2;
-        ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 65 * shieldPulse, 0, Math.PI * 2); ctx.stroke();
-        ctx.globalAlpha = 0.1;
-        ctx.fillStyle = COLORS.INVINCIBLE;
-        ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 60 * shieldPulse, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
+        const shieldPulse = 1 + Math.sin(frame * 0.15) * 0.05;
+        ctx.save(); ctx.strokeStyle = COLORS.INVINCIBLE; ctx.lineWidth = 4; ctx.globalAlpha = 0.2; ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 65 * shieldPulse, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 0.1; ctx.fillStyle = COLORS.INVINCIBLE; ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 60 * shieldPulse, 0, Math.PI * 2); ctx.fill(); ctx.restore();
       }
       
-      ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER;
-      ctx.globalAlpha = 0.25;
-      drawRoundRect(ctx, playerPosition.x - 28, playerPosition.y - 48, 56, 96, 14); ctx.fill();
-      ctx.globalAlpha = 1;
-      drawRoundRect(ctx, playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); ctx.fill();
-      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.5;
-      ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 15);
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = '#ff0000';
-      ctx.fillRect(playerPosition.x - 18, playerPosition.y + 30, 8, 4); 
-      ctx.fillRect(playerPosition.x + 10, playerPosition.y + 30, 8, 4);
+      // Car Body
+      ctx.save();
+      if (isSkidding) {
+        ctx.translate(playerPosition.x, playerPosition.y);
+        ctx.rotate(Math.sin(frame * 0.2) * 0.15); // Shake while skidding
+        ctx.translate(-playerPosition.x, -playerPosition.y);
+      }
+      ctx.fillStyle = isInvincible ? COLORS.INVINCIBLE : COLORS.PLAYER; ctx.globalAlpha = 0.25; drawRoundRect(ctx, playerPosition.x - 28, playerPosition.y - 48, 56, 96, 14); ctx.fill();
+      ctx.globalAlpha = 1; drawRoundRect(ctx, playerPosition.x - 22, playerPosition.y - 42, 44, 84, 10); ctx.fill();
+      ctx.fillStyle = '#ffffff'; ctx.globalAlpha = 0.5; ctx.fillRect(playerPosition.x - 18, playerPosition.y - 28, 36, 15); ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ff0000'; ctx.fillRect(playerPosition.x - 18, playerPosition.y + 30, 8, 4); ctx.fillRect(playerPosition.x + 10, playerPosition.y + 30, 8, 4);
+      ctx.restore();
     }
-    
     ctx.restore();
-    
-    requestAnimationFrame(draw);
-  }, [isInvincible, isRecovering, isPaused, level, theme]);
+  }, [isInvincible, isRecovering, isPaused, level, theme, isSkidding]);
 
   useEffect(() => {
-    const req = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(req);
+    let reqId: number;
+    const loop = () => { draw(); reqId = requestAnimationFrame(loop); };
+    reqId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(reqId);
   }, [draw]);
 
   function drawStar(ctx: CanvasRenderingContext2D, cx: number, cy: number, spikes: number, outerRadius: number, innerRadius: number) {
     let rot = Math.PI / 2 * 3; let x = cx; let y = cy; let step = Math.PI / spikes;
     ctx.beginPath(); ctx.moveTo(cx, cy - outerRadius);
-    for (let i = 0; i < spikes; i++) {
-      x = cx + Math.cos(rot) * outerRadius; y = cy + Math.sin(rot) * outerRadius; ctx.lineTo(x, y); rot += step;
-      x = cx + Math.cos(rot) * innerRadius; y = cy + Math.sin(rot) * innerRadius; ctx.lineTo(x, y); rot += step;
-    }
+    for (let i = 0; i < spikes; i++) { x = cx + Math.cos(rot) * outerRadius; y = cy + Math.sin(rot) * outerRadius; ctx.lineTo(x, y); rot += step; x = cx + Math.cos(rot) * innerRadius; y = cy + Math.sin(rot) * innerRadius; ctx.lineTo(x, y); rot += step; }
     ctx.lineTo(cx, cy - outerRadius); ctx.closePath(); ctx.fill();
   }
-
   return <canvas ref={canvasRef} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="block" />;
 };
 

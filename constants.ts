@@ -2,27 +2,31 @@
 export const CANVAS_WIDTH = 600;
 export const CANVAS_HEIGHT = 800;
 export const ROAD_WIDTH = 440;
-// Better centered lanes: Road starts at 80, ends at 520. Centers: 135, 245, 355, 465
 export const LANES = [135, 245, 355, 465];
 
-export const PLAYER_SIZE = { width: 45, height: 85 };
-export const NPC_CAR_SIZE = { width: 45, height: 85 };
-export const OBSTACLE_SIZE = { width: 55, height: 55 };
+export const PLAYER_SIZE = { width: 48, height: 85 };
+export const NPC_CAR_SIZE = { width: 48, height: 85 }; // Restored to realistic size
+export const OBSTACLE_SIZE = { width: 90, height: 60 }; // Wide blocks to prevent cheating
 export const BONUS_SIZE = { width: 35, height: 35 };
+export const OIL_SIZE = { width: 70, height: 50 };
 
 export const LEVEL_DURATION = 30; 
 export const MAX_LEVELS = 5;
 export const INITIAL_LIVES = 3;
 export const INVINCIBILITY_DURATION = 5; 
-export const RECOVERY_INVINCIBILITY_DURATION = 5; // Increased to 5s (2s pause + 3s play)
+export const RECOVERY_INVINCIBILITY_DURATION = 5;
 export const RECOVERY_PAUSE_DURATION = 2; 
 
+export const NEAR_MISS_THRESHOLD = 22; 
+export const NEAR_MISS_POINTS = 500;
+export const HIGH_SCORES_KEY = 'NEON_TURBO_HIGH_SCORES';
+
 export const LEVEL_CONFIGS = [
-  { speed: 2.2, trafficDensity: 0.015, obstacleDensity: 0.005, bonusDensity: 0.005 },
-  { speed: 3.2, trafficDensity: 0.02, obstacleDensity: 0.007, bonusDensity: 0.005 },
-  { speed: 4.2, trafficDensity: 0.025, obstacleDensity: 0.009, bonusDensity: 0.005 },
-  { speed: 5.2, trafficDensity: 0.032, obstacleDensity: 0.012, bonusDensity: 0.005 },
-  { speed: 6.2, trafficDensity: 0.04, obstacleDensity: 0.016, bonusDensity: 0.005 },
+  { speed: 2.0, trafficDensity: 0.015, obstacleDensity: 0.005, bonusDensity: 0.005, oilDensity: 0.005, policeCount: 0 },
+  { speed: 3.0, trafficDensity: 0.018, obstacleDensity: 0.007, bonusDensity: 0.005, oilDensity: 0.007, policeCount: 0 },
+  { speed: 4.0, trafficDensity: 0.022, obstacleDensity: 0.010, bonusDensity: 0.005, oilDensity: 0.009, policeCount: 1 },
+  { speed: 5.0, trafficDensity: 0.028, obstacleDensity: 0.013, bonusDensity: 0.005, oilDensity: 0.011, policeCount: 2 },
+  { speed: 6.0, trafficDensity: 0.035, obstacleDensity: 0.016, bonusDensity: 0.005, oilDensity: 0.013, policeCount: 3 },
 ];
 
 export const LEVEL_THEMES = [
@@ -37,4 +41,7 @@ export const COLORS = {
   PLAYER: '#00f2ff',
   INVINCIBLE: '#ffcc00',
   OBSTACLE: '#475569',
+  POLICE_RED: '#ef4444',
+  POLICE_BLUE: '#3b82f6',
+  OIL: '#0a0a0a'
 };
