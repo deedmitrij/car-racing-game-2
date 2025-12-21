@@ -4,6 +4,8 @@ class SoundManager {
   private engineOsc: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
   private bgmInterval: any = null;
+  private sirenOsc: OscillatorNode | null = null;
+  private sirenGain: GainNode | null = null;
 
   async init() {
     if (this.ctx) {
@@ -52,7 +54,6 @@ class SoundManager {
     const context = this.ctx;
     if (!context || !this.engineOsc || !this.engineGain) return;
     
-    // Increased frequency multiplier from 18 to 35 to compensate for lower numeric speed range (2-6)
     const targetFreq = 50 + (speed * 35);
     const targetGain = active ? 0.45 : 0;
     
@@ -79,6 +80,145 @@ class SoundManager {
     gain.connect(context.destination);
     osc.start();
     osc.stop(context.currentTime + 0.35);
+  }
+
+  playNearMiss() {
+    const context = this.ctx;
+    if (!context) return;
+    
+    const osc = context.createOscillator();
+    const gain = context.createGain();
+    
+    osc.type = 'sine';
+    // High-pitched "shing" whistle
+    osc.frequency.setValueAtTime(1200, context.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(2400, context.currentTime + 0.1);
+    
+    gain.gain.setValueAtTime(0.001, context.currentTime);
+    gain.gain.linearRampToValueAtTime(0.3, context.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.15);
+    
+    osc.connect(gain);
+    gain.connect(context.destination);
+    osc.start();
+    osc.stop(context.currentTime + 0.2);
+  }
+
+  playSkid() {
+    const context = this.ctx;
+    if (!context) return;
+
+    const duration = 0.8;
+    const now = context.currentTime;
+
+    // --- LAYER 1: The Screeching Tone ---
+    const screech = context.createOscillator();
+    const screechGain = context.createGain();
+    screech.type = 'square';
+    
+    // Start high and drop slightly as the car loses speed/energy
+    screech.frequency.setValueAtTime(1000, now);
+    screech.frequency.exponentialRampToValueAtTime(800, now + duration);
+
+    // Apply a bandpass filter to get that "rubbery" friction resonance
+    const filter = context.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1200, now);
+    filter.Q.setValueAtTime(2, now);
+
+    screechGain.gain.setValueAtTime(0, now);
+    screechGain.gain.linearRampToValueAtTime(0.15, now + 0.05);
+    screechGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    // --- LAYER 2: The Friction Noise ---
+    const bufferSize = context.sampleRate * duration;
+    const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    
+    const noise = context.createBufferSource();
+    noise.buffer = buffer;
+    
+    const noiseFilter = context.createBiquadFilter();
+    noiseFilter.type = 'highpass';
+    noiseFilter.frequency.setValueAtTime(1500, now);
+    noiseFilter.frequency.exponentialRampToValueAtTime(600, now + duration);
+
+    const noiseGain = context.createGain();
+    noiseGain.gain.setValueAtTime(0.2, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    // Connect Layers
+    screech.connect(filter);
+    filter.connect(screechGain);
+    screechGain.connect(context.destination);
+    
+    noise.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(context.destination);
+
+    screech.start();
+    screech.stop(now + duration);
+    noise.start();
+  }
+
+  playPoliceNotification() {
+    const context = this.ctx;
+    if (!context) return;
+
+    [660, 880].forEach((freq, i) => {
+      const startTime = context.currentTime + (i * 0.15);
+      const osc = context.createOscillator();
+      const gain = context.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, startTime);
+      
+      gain.gain.setValueAtTime(0.1, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
+      
+      osc.connect(gain);
+      gain.connect(context.destination);
+      osc.start(startTime);
+      osc.stop(startTime + 0.15);
+    });
+  }
+
+  setSirenActive(active: boolean) {
+    const context = this.ctx;
+    if (!context) return;
+
+    if (active && !this.sirenOsc) {
+      this.sirenOsc = context.createOscillator();
+      this.sirenGain = context.createGain();
+      this.sirenOsc.type = 'triangle';
+      
+      const now = context.currentTime;
+      this.sirenOsc.frequency.setValueAtTime(440, now);
+      
+      this.sirenGain.gain.setValueAtTime(0, now);
+      this.sirenGain.gain.linearRampToValueAtTime(0.1, now + 0.5);
+
+      this.sirenOsc.connect(this.sirenGain);
+      this.sirenGain.connect(context.destination);
+      this.sirenOsc.start();
+
+      const lfo = () => {
+        if (!this.sirenOsc || !this.ctx) return;
+        const time = this.ctx.currentTime;
+        const freq = 440 + Math.sin(time * 6) * 150;
+        this.sirenOsc.frequency.setTargetAtTime(freq, time, 0.05);
+        requestAnimationFrame(lfo);
+      };
+      lfo();
+    } else if (!active && this.sirenOsc) {
+      const stopTime = context.currentTime + 0.5;
+      this.sirenGain?.gain.exponentialRampToValueAtTime(0.001, stopTime);
+      this.sirenOsc.stop(stopTime);
+      this.sirenOsc = null;
+      this.sirenGain = null;
+    }
   }
 
   playCrash() {
@@ -174,6 +314,7 @@ class SoundManager {
       clearInterval(this.bgmInterval);
       this.bgmInterval = null;
     }
+    this.setSirenActive(false);
   }
 }
 

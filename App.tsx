@@ -97,6 +97,13 @@ const App: React.FC = () => {
     }
   }, [gameState]);
 
+  // Trigger Police Notification Sound
+  useEffect(() => {
+    if (showPoliceWarning) {
+      soundManager.playPoliceNotification();
+    }
+  }, [showPoliceWarning]);
+
   const clearInputs = useCallback(() => {
     keysPressed.current = {};
   }, []);
@@ -146,7 +153,7 @@ const App: React.FC = () => {
     collisionLockRef.current = false;
     shakeRef.current = 0;
     policeSpawnedCount.current = 0;
-    nextPoliceSpawnTime.current = performance.now() + 5000; // First police after 5s
+    nextPoliceSpawnTime.current = performance.now() + 5000;
     setShowPoliceWarning(false);
     
     const isFirstLevel = level === 1;
@@ -255,7 +262,10 @@ const App: React.FC = () => {
 
         const isCurrentlyHarmable = !collisionLockRef.current && !gameState.isInvincible && gameState.recoveryInvincibilityTime <= 0;
 
-        // Police AI: Weaving
+        // Siren Logic: Play if any police car is on track
+        const hasPolice = entitiesRef.current.some(e => e.type === EntityType.POLICE_CAR);
+        soundManager.setSirenActive(hasPolice);
+
         const nextEntities = entitiesRef.current.map(e => {
           let nextX = e.position.x;
           let nextTarget = e.targetLaneX || e.position.x;
@@ -285,13 +295,13 @@ const App: React.FC = () => {
               const collisionDist = (PLAYER_SIZE.width + e.width) / 2;
               if (dx < collisionDist + NEAR_MISS_THRESHOLD && dx >= collisionDist - 8) {
                 nearMissDetected = true;
+                soundManager.playNearMiss();
               }
             }
             filteredEntities.push(e);
           }
         }
 
-        // --- IMPROVED SEQUENTIAL POLICE SPAWNING ---
         if (time - lastSpawnTime.current > 500) { 
           const lane = LANES[Math.floor(Math.random() * LANES.length)];
           const isLaneOccupied = filteredEntities.some(e => Math.abs(e.position.x - lane) < 20 && e.position.y < 150);
@@ -300,7 +310,6 @@ const App: React.FC = () => {
             const theme = LEVEL_THEMES[gameState.level - 1];
             const rand = Math.random();
             
-            // Show warning 1 second before police arrives
             if (config.policeCount > 0 && 
                 policeSpawnedCount.current < config.policeCount && 
                 time > nextPoliceSpawnTime.current - 1500 && 
@@ -310,7 +319,6 @@ const App: React.FC = () => {
               setShowPoliceWarning(false);
             }
 
-            // Spawn Police Car if time is up
             if (config.policeCount > 0 && 
                 policeSpawnedCount.current < config.policeCount && 
                 time >= nextPoliceSpawnTime.current) {
@@ -323,11 +331,9 @@ const App: React.FC = () => {
               });
               
               policeSpawnedCount.current++;
-              // Minimum 8 second gap before the next one starts appearing
               nextPoliceSpawnTime.current = time + 8000 + (Math.random() * 3000); 
               lastSpawnTime.current = time;
             } 
-            // Only spawn regular traffic if we are NOT currently spawning a police car
             else if (rand < config.trafficDensity) {
               filteredEntities.push({
                 id: Math.random().toString(), type: EntityType.NPC_CAR,
@@ -375,7 +381,10 @@ const App: React.FC = () => {
               createParticles(entity.position.x, entity.position.y, COLORS.INVINCIBLE, 20);
               entitiesRef.current = entitiesRef.current.filter(e => e.id !== entity.id);
             } else if (entity.type === EntityType.OIL_SPILL) {
-              hitOil = true;
+              if (!gameState.isSkidding) {
+                hitOil = true;
+                soundManager.playSkid();
+              }
             } else if (isCurrentlyHarmable) {
               collisionLockRef.current = true;
               crashed = true;
@@ -459,6 +468,7 @@ const App: React.FC = () => {
 
       } else if (gameState.status === GameStatus.COLLISION_PAUSE) {
         soundManager.setEngineSpeed(0, false);
+        soundManager.setSirenActive(false);
         setGameState(prev => {
           const nextRec = prev.recoveryTime - deltaTime;
           const nextRecInvTime = prev.recoveryInvincibilityTime - deltaTime;
@@ -471,6 +481,7 @@ const App: React.FC = () => {
         });
       } else {
         soundManager.setEngineSpeed(0, false);
+        soundManager.setSirenActive(false);
       }
     }
     lastTimeRef.current = time;
@@ -519,7 +530,6 @@ const App: React.FC = () => {
         
         <HUD gameState={gameState} />
 
-        {/* POLICE WARNING OVERLAY */}
         {showPoliceWarning && gameState.status === GameStatus.PLAYING && (
           <div className="absolute top-1/3 left-0 right-0 flex flex-col items-center justify-center z-[55] animate-pulse">
             <div className="bg-red-600/90 text-white px-8 py-2 font-black italic text-xl skew-x-[-15deg] shadow-[0_0_30px_rgba(220,38,38,0.8)] border-y-2 border-white">
@@ -723,7 +733,6 @@ const GameCanvas: React.FC<{
         ctx.globalAlpha = 0.1; ctx.fillStyle = COLORS.INVINCIBLE; ctx.beginPath(); ctx.arc(playerPosition.x, playerPosition.y, 60 * shieldPulse, 0, Math.PI * 2); ctx.fill(); ctx.restore();
       }
       
-      // Car Body
       ctx.save();
       if (isSkidding) {
         ctx.translate(playerPosition.x, playerPosition.y);
